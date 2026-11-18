@@ -1,4 +1,4 @@
-import { adminAuth, adminDb } from "../lib/firebaseAdmin";
+import { adminAuth, adminDb } from "../lib/firebaseAdmin.js";
 
 export default {
   async fetch(request: Request): Promise<Response> {
