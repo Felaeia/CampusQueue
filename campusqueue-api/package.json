@@ -10,5 +10,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
-  }
+  },
+  "name": "campusqueue-api"
 }
