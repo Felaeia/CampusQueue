@@ -1,5 +1,9 @@
 # vercel
 .vercel
+*firebase-adminsdk*.json
+serviceAccount*.json
+service-account*.json
+*.pem
 
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
