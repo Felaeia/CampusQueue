@@ -5,7 +5,10 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DieCutNotch } from '../../components/DieCutNotch';
+import { ActiveConflictModal } from '../../components/home/ActiveConflictModal';
+import { NotificationDrawer } from '../../components/home/NotificationDrawer';
 import { OfficeCard } from '../../components/home/OfficeCard';
+import { RequestTicketSheet } from '../../components/home/RequestTicketSheet';
 import { RadarPulseDot } from '../../components/RadarPulseDot';
 import { useQueue } from '../../context/QueueContext';
 import { ActiveTicket, Office } from '../../types/queue';
@@ -17,14 +20,18 @@ export default function StudentHomeScreen() {
     studentProfile,
     offices,
     activeTickets,
+    notifications,
     unreadNotificationsCount,
     setSelectedTicketId,
+    markNotificationRead,
+    markAllNotificationsRead,
+    issueTicket,
     triggerHaptic,
   } = useQueue();
 
-  const [, setRequestSheetOffice] = useState<Office | null>(null);
-  const [, setConflictTicket] = useState<ActiveTicket | null>(null);
-  const [, setShowNotifDrawer] = useState(false);
+  const [requestSheetOffice, setRequestSheetOffice] = useState<Office | null>(null);
+  const [conflictTicket, setConflictTicket] = useState<ActiveTicket | null>(null);
+  const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
   const primaryActive = activeTickets[0] ?? null;
 
@@ -159,6 +166,46 @@ export default function StudentHomeScreen() {
           })}
         </View>
       </ScrollView>
+
+      <RequestTicketSheet
+        office={requestSheetOffice}
+        onClose={() => setRequestSheetOffice(null)}
+        onConfirm={(serviceName, notes) => {
+          if (!requestSheetOffice) return;
+          const issued = issueTicket({
+            officeId: requestSheetOffice.id,
+            serviceName,
+            notes,
+          });
+          setRequestSheetOffice(null);
+          if (issued) {
+            router.replace('/student/ticket');
+          }
+        }}
+      />
+
+      <ActiveConflictModal
+        ticket={conflictTicket}
+        onClose={() => setConflictTicket(null)}
+        onViewTicket={(ticketId) => {
+          setConflictTicket(null);
+          handleOpenTicket(ticketId);
+        }}
+      />
+
+      <NotificationDrawer
+        visible={showNotifDrawer}
+        notifications={notifications}
+        onClose={() => setShowNotifDrawer(false)}
+        onMarkAllRead={markAllNotificationsRead}
+        onPressNotification={(item) => {
+          markNotificationRead(item.id);
+          setShowNotifDrawer(false);
+          if (activeTickets[0]) {
+            handleOpenTicket(activeTickets[0].id);
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }
