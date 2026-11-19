@@ -1,17 +1,32 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HistoryReceiptCard } from '../../components/history/HistoryReceiptCard';
+import { ReceiptDetailModal } from '../../components/history/ReceiptDetailModal';
+import { RequeueConfirmModal } from '../../components/history/RequeueConfirmModal';
 import { useQueue } from '../../context/QueueContext';
 import { HistoryFilterOption, HistoryTicket } from '../../types/queue';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 
 export default function StudentHistoryScreen() {
-  const { historyTickets, historyFilters, historicalBasePassCount, triggerHaptic } = useQueue();
+  const router = useRouter();
+  const {
+    studentProfile,
+    offices,
+    activeTickets,
+    historyTickets,
+    historyFilters,
+    historicalBasePassCount,
+    issueTicket,
+    showToast,
+    triggerHaptic,
+  } = useQueue();
 
   const [statusFilter, setStatusFilter] = useState<HistoryFilterOption>('All');
-  const [, setSelectedReceipt] = useState<HistoryTicket | null>(null);
+  const [selectedReceipt, setSelectedReceipt] = useState<HistoryTicket | null>(null);
+  const [requeueTarget, setRequeueTarget] = useState<HistoryTicket | null>(null);
 
   const filteredList = useMemo(() => {
     if (statusFilter === 'All') return historyTickets;
@@ -92,6 +107,47 @@ export default function StudentHistoryScreen() {
           )}
         </View>
       </ScrollView>
+
+      <ReceiptDetailModal
+        receipt={selectedReceipt}
+        studentProfile={studentProfile}
+        onClose={() => setSelectedReceipt(null)}
+        onRequestAgain={(receipt) => {
+          const existing = activeTickets.find((t) => t.officeId === receipt.officeId);
+          if (existing) {
+            setSelectedReceipt(null);
+            triggerHaptic('warning');
+            showToast(
+              `You already hold active ticket ${existing.ticketNumber} at ${receipt.officeName}.`,
+              'warning'
+            );
+            return;
+          }
+          setSelectedReceipt(null);
+          setRequeueTarget(receipt);
+        }}
+      />
+
+      <RequeueConfirmModal
+        target={requeueTarget}
+        waitingCount={
+          requeueTarget
+            ? offices.find((o) => o.id === requeueTarget.officeId)?.waitingCount ?? 3
+            : 3
+        }
+        onClose={() => setRequeueTarget(null)}
+        onConfirm={(target) => {
+          const issued = issueTicket({
+            officeId: target.officeId,
+            serviceName: target.service,
+            notes: 'Re-queued from history',
+          });
+          setRequeueTarget(null);
+          if (issued) {
+            router.replace('/student/ticket');
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }
