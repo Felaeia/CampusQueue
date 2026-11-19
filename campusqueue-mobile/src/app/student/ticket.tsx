@@ -8,6 +8,8 @@ import Svg, { Line } from 'react-native-svg';
 import { DieCutNotch } from '../../components/DieCutNotch';
 import { TactileQRCode } from '../../components/TactileQRCode';
 import { TicketBarcode } from '../../components/TicketBarcode';
+import { FullScreenQRModal } from '../../components/ticket/FullScreenQRModal';
+import { LeaveQueueModal } from '../../components/ticket/LeaveQueueModal';
 import { LiveQueueTrack } from '../../components/ticket/LiveQueueTrack';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, getOfficeAccent, Radii, Shadows } from '../../theme/tokens';
@@ -18,13 +20,17 @@ export default function ActiveTicketScreen() {
     studentProfile,
     activeTickets,
     currentHeroTicket,
+    cancelReasons,
     barcodePattern,
     setSelectedTicketId,
+    cancelTicket,
+    advanceQueue,
+    resetSimulation,
     triggerHaptic,
   } = useQueue();
 
-  const [, setShowFullQRModal] = useState(false);
-  const [, setShowCancelModal] = useState(false);
+  const [showFullQRModal, setShowFullQRModal] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
 
   const ticket = currentHeroTicket;
 
@@ -261,7 +267,52 @@ export default function ActiveTicketScreen() {
         >
           <Text style={styles.cancelButtonText}>Leave Queue / Cancel Ticket</Text>
         </Pressable>
+
+        {/* Compact Live Queue Simulator Controls */}
+        <View style={styles.simulatorBar}>
+          <Pressable
+            onPress={() => {
+              const result = advanceQueue();
+              if (result === 'completed') {
+                router.replace('/student/history');
+              }
+            }}
+            style={({ pressed }) => [styles.simAdvanceBtn, pressed && styles.pressed]}
+          >
+            <View style={styles.simDot} />
+            <Text style={styles.simAdvanceText}>
+              {isServing ? 'Complete Service Step' : 'Simulate Queue Step'}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={resetSimulation}
+            accessibilityLabel="Reset queue simulation"
+            style={({ pressed }) => [styles.simResetBtn, pressed && styles.pressed]}
+          >
+            <Feather name="rotate-ccw" size={14} color={Colors.ink} />
+          </Pressable>
+        </View>
       </ScrollView>
+
+      <FullScreenQRModal
+        visible={showFullQRModal}
+        ticket={ticket}
+        studentProfile={studentProfile}
+        onClose={() => setShowFullQRModal(false)}
+      />
+
+      <LeaveQueueModal
+        visible={showCancelModal}
+        ticket={ticket}
+        reasons={cancelReasons}
+        onClose={() => setShowCancelModal(false)}
+        onConfirmCancel={(reason) => {
+          setShowCancelModal(false);
+          cancelTicket(ticket.id, reason);
+          router.replace('/student/home');
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -559,6 +610,47 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyBold,
     fontSize: 12.5,
     color: Colors.danger,
+  },
+  simulatorBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingTop: 2,
+  },
+  simAdvanceBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.matcha,
+    borderWidth: 1,
+    borderColor: 'rgba(18, 20, 23, 0.14)',
+  },
+  simDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.ink,
+  },
+  simAdvanceText: {
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 11.5,
+    color: Colors.ink,
+  },
+  simResetBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyCard: {
     marginTop: 24,
