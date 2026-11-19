@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,8 +20,13 @@ import { ForgotPasswordModal } from '../../components/login/ForgotPasswordModal'
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
+/**
+ * Screen 1: Unified Login Screen (/auth/login)
+ * Inputs strictly initialize empty per prototype specification.
+ */
 export default function LoginScreen() {
   const router = useRouter();
+  const passwordInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const {
     authDefaults,
     studentProfile,
@@ -35,6 +42,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [rememberSession, setRememberSession] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
+  const [focusedField, setFocusedField] = useState<'usn' | 'password' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showFirstLoginModal, setShowFirstLoginModal] = useState(false);
@@ -45,6 +53,7 @@ export default function LoginScreen() {
     setPassword('');
     setErrorMsg('');
     setShowPwd(false);
+    setFocusedField(null);
     setShowFirstLoginModal(false);
     setShowForgotModal(false);
   }, [loginResetNonce]);
@@ -85,118 +94,135 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}
       >
-        <View style={styles.container}>
-          {/* Institutional Header */}
-          <View style={styles.header}>
-            <CampusQueueEmblem />
-            <Text style={styles.brandTitle}>CampusQueue</Text>
-            <Text style={styles.brandSubtitle}>{studentProfile.institution}</Text>
-          </View>
-
-          {/* Sign-In Card */}
-          <View style={[styles.card, Shadows.card]}>
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>USN</Text>
-              <TextInput
-                value={identifier}
-                onChangeText={(text) => {
-                  setIdentifier(text);
-                  if (errorMsg) setErrorMsg('');
-                }}
-                placeholder="Enter your USN"
-                placeholderTextColor="rgba(18, 20, 23, 0.40)"
-                keyboardType="number-pad"
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[styles.input, identifier.length > 0 && styles.inputMono]}
-              />
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.container}>
+            {/* Institutional Header */}
+            <View style={styles.header}>
+              <CampusQueueEmblem />
+              <Text style={styles.brandTitle}>CampusQueue</Text>
+              <Text style={styles.brandSubtitle}>{studentProfile.institution}</Text>
             </View>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.passwordWrap}>
+            {/* Clean Minimal Unified Sign-In Card */}
+            <View style={[styles.card, Shadows.card]}>
+              {/* USN Input */}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>USN</Text>
                 <TextInput
-                  value={password}
+                  value={identifier}
                   onChangeText={(text) => {
-                    setPassword(text);
+                    setIdentifier(text);
                     if (errorMsg) setErrorMsg('');
                   }}
-                  placeholder="Enter your password"
+                  onFocus={() => setFocusedField('usn')}
+                  onBlur={() => setFocusedField(null)}
+                  placeholder="Enter your USN"
                   placeholderTextColor="rgba(18, 20, 23, 0.40)"
-                  secureTextEntry={!showPwd}
+                  keyboardType="number-pad"
+                  returnKeyType="next"
+                  onSubmitEditing={() => passwordInputRef.current?.focus()}
                   autoCapitalize="none"
                   autoCorrect={false}
-                  style={[styles.input, styles.passwordInput]}
+                  style={[
+                    styles.input,
+                    identifier.length > 0 && styles.inputMono,
+                    focusedField === 'usn' && styles.inputFocused,
+                  ]}
                 />
-                <Pressable
-                  onPress={() => setShowPwd((prev) => !prev)}
-                  accessibilityLabel={showPwd ? 'Hide password' : 'Show password'}
-                  hitSlop={8}
-                  style={styles.eyeButton}
-                >
-                  <Feather
-                    name={showPwd ? 'eye-off' : 'eye'}
-                    size={16}
-                    color="rgba(18, 20, 23, 0.48)"
+              </View>
+
+              {/* Password Input with Eye Toggle */}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Password</Text>
+                <View style={styles.passwordWrap}>
+                  <TextInput
+                    ref={passwordInputRef}
+                    value={password}
+                    onChangeText={(text) => {
+                      setPassword(text);
+                      if (errorMsg) setErrorMsg('');
+                    }}
+                    onFocus={() => setFocusedField('password')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="Enter your password"
+                    placeholderTextColor="rgba(18, 20, 23, 0.40)"
+                    secureTextEntry={!showPwd}
+                    returnKeyType="done"
+                    onSubmitEditing={handleSignIn}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[
+                      styles.input,
+                      styles.passwordInput,
+                      focusedField === 'password' && styles.inputFocused,
+                    ]}
                   />
+                  <Pressable
+                    onPress={() => setShowPwd((prev) => !prev)}
+                    accessibilityLabel={showPwd ? 'Hide password' : 'Show password'}
+                    hitSlop={8}
+                    style={styles.eyeButton}
+                  >
+                    <Feather
+                      name={showPwd ? 'eye-off' : 'eye'}
+                      size={16}
+                      color={focusedField === 'password' ? Colors.ink : 'rgba(18, 20, 23, 0.48)'}
+                    />
+                  </Pressable>
+                </View>
+              </View>
+
+              {/* Remember Session & Forgot Password Row */}
+              <View style={styles.optionsRow}>
+                <Pressable
+                  onPress={() => setRememberSession((prev) => !prev)}
+                  style={styles.rememberRow}
+                >
+                  <View style={[styles.checkbox, rememberSession && styles.checkboxChecked]}>
+                    {rememberSession ? (
+                      <Feather name="check" size={11} color={Colors.surface} />
+                    ) : null}
+                  </View>
+                  <Text style={styles.rememberText}>Remember session</Text>
+                </Pressable>
+
+                <Pressable onPress={() => setShowForgotModal(true)} hitSlop={6}>
+                  <Text style={styles.forgotLink}>Forgot Password?</Text>
                 </Pressable>
               </View>
-            </View>
 
-            {/* Remember Session & Forgot Password Row */}
-            <View style={styles.optionsRow}>
-              <Pressable
-                onPress={() => setRememberSession((prev) => !prev)}
-                style={styles.rememberRow}
-              >
-                <View
-                  style={[
-                    styles.checkbox,
-                    rememberSession && styles.checkboxChecked,
-                  ]}
-                >
-                  {rememberSession ? (
-                    <Feather name="check" size={11} color={Colors.surface} />
-                  ) : null}
+              {/* Inline Error Banner */}
+              {errorMsg ? (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorBannerText}>{errorMsg}</Text>
                 </View>
-                <Text style={styles.rememberText}>Remember session</Text>
-              </Pressable>
+              ) : null}
 
-              <Pressable onPress={() => setShowForgotModal(true)} hitSlop={6}>
-                <Text style={styles.forgotLink}>Forgot Password?</Text>
+              {/* Primary Obsidian Sign In Button */}
+              <Pressable
+                onPress={handleSignIn}
+                disabled={isLoading}
+                style={({ pressed }) => [
+                  styles.signInButton,
+                  isLoading && styles.signInButtonDisabled,
+                  pressed && !isLoading && styles.signInButtonPressed,
+                ]}
+              >
+                {isLoading ? <ActivityIndicator size="small" color={Colors.matcha} /> : null}
+                <Text style={styles.signInText}>{isLoading ? 'Signing in...' : 'Sign In'}</Text>
               </Pressable>
             </View>
-
-            {errorMsg ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorBannerText}>{errorMsg}</Text>
-              </View>
-            ) : null}
-
-            <Pressable
-              onPress={handleSignIn}
-              disabled={isLoading}
-              style={({ pressed }) => [
-                styles.signInButton,
-                isLoading && styles.signInButtonDisabled,
-                pressed && !isLoading && styles.signInButtonPressed,
-              ]}
-            >
-              {isLoading ? (
-                <ActivityIndicator size="small" color={Colors.matcha} />
-              ) : null}
-              <Text style={styles.signInText}>
-                {isLoading ? 'Signing in...' : 'Sign In'}
-              </Text>
-            </Pressable>
           </View>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <FirstLoginPasswordModal
         visible={showFirstLoginModal}
@@ -235,11 +261,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.canvas,
   },
+  flex: {
+    flex: 1,
+  },
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 20,
-    paddingTop: 48,
-    paddingBottom: 32,
+    paddingTop: 52,
+    paddingBottom: 36,
   },
   container: {
     width: '100%',
@@ -295,6 +324,10 @@ const styles = StyleSheet.create({
   inputMono: {
     fontFamily: Fonts.monoMedium,
     fontVariant: ['tabular-nums'],
+  },
+  inputFocused: {
+    borderColor: Colors.registrar,
+    backgroundColor: Colors.surface,
   },
   passwordWrap: {
     position: 'relative',

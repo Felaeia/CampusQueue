@@ -55,7 +55,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <QueueProvider>
         <View style={styles.root}>
-          <StatusBar style="dark" backgroundColor={Colors.canvas} />
+          <StatusBar style="dark" />
           <Stack
             screenOptions={{
               headerShown: false,
