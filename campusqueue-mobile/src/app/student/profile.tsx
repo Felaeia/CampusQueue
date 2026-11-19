@@ -1,15 +1,38 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
+interface TactileSwitchProps {
+  value: boolean;
+  onToggle: () => void;
+  accessibilityLabel: string;
+}
+
+function TactileSwitch({ value, onToggle, accessibilityLabel }: TactileSwitchProps) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      accessibilityLabel={accessibilityLabel}
+      style={[styles.switchTrack, value ? styles.switchTrackOn : styles.switchTrackOff]}
+    >
+      <View style={[styles.switchThumb, value ? styles.switchThumbOn : styles.switchThumbOff]} />
+    </Pressable>
+  );
+}
+
 export default function StudentProfileScreen() {
   const router = useRouter();
-  const { studentProfile, triggerHaptic } = useQueue();
+  const { studentProfile, togglePushAlerts, toggleSoundAndHaptics, triggerHaptic } = useQueue();
+
+  const [, setShowChangePwdModal] = useState(false);
+  const [, setShowLogoutModal] = useState(false);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -79,6 +102,81 @@ export default function StudentProfileScreen() {
             </View>
           </View>
         </View>
+
+        {/* Notification Preferences Card */}
+        <View style={[styles.sectionCard, Shadows.card]}>
+          <Text style={styles.sectionLabel}>NOTIFICATION PREFERENCES</Text>
+
+          <View style={styles.prefRow}>
+            <View style={styles.prefCopy}>
+              <Text style={styles.prefTitle}>Push Notifications for Approaching Turn</Text>
+              <Text style={styles.prefSubtitle}>Approaching turn &amp; called alerts</Text>
+            </View>
+            <TactileSwitch
+              value={studentProfile.pushAlerts}
+              onToggle={() => {
+                triggerHaptic('light');
+                togglePushAlerts();
+              }}
+              accessibilityLabel="Push Notifications for Approaching Turn"
+            />
+          </View>
+
+          <View style={styles.cardDivider} />
+
+          <View style={styles.prefRow}>
+            <View style={styles.prefCopy}>
+              <Text style={styles.prefTitle}>Sound &amp; Vibration Alerts</Text>
+              <Text style={styles.prefSubtitle}>
+                Haptic feedback when your number is called
+              </Text>
+            </View>
+            <TactileSwitch
+              value={studentProfile.soundAndHaptics}
+              onToggle={() => {
+                triggerHaptic('light');
+                toggleSoundAndHaptics();
+              }}
+              accessibilityLabel="Sound and Vibration Alerts"
+            />
+          </View>
+        </View>
+
+        {/* Account & Security Card */}
+        <View style={[styles.sectionCard, Shadows.card]}>
+          <Text style={styles.sectionLabel}>ACCOUNT &amp; SECURITY</Text>
+
+          <Pressable
+            onPress={() => {
+              triggerHaptic('light');
+              setShowChangePwdModal(true);
+            }}
+            style={({ pressed }) => [styles.securityRow, pressed && styles.pressed]}
+          >
+            <View style={styles.securityLeft}>
+              <View style={styles.securityIconBox}>
+                <Ionicons name="key-outline" size={16} color={Colors.ink} />
+              </View>
+              <View style={styles.securityCopy}>
+                <Text style={styles.prefTitle}>Change Password</Text>
+                <Text style={styles.prefSubtitle}>Update your CampusQueue login password</Text>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={16} color={Colors.inkSoft} />
+          </Pressable>
+        </View>
+
+        {/* Sign Out Button */}
+        <Pressable
+          onPress={() => {
+            triggerHaptic('warning');
+            setShowLogoutModal(true);
+          }}
+          style={({ pressed }) => [styles.signOutBtn, pressed && styles.signOutPressed]}
+        >
+          <Feather name="log-out" size={16} color={Colors.danger} />
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -231,6 +329,116 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.90)',
     marginTop: 3,
     fontVariant: ['tabular-nums'],
+  },
+  sectionCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    gap: 14,
+  },
+  sectionLabel: {
+    fontFamily: Fonts.monoBold,
+    fontSize: 10,
+    letterSpacing: 0.7,
+    color: Colors.inkSoft,
+    fontVariant: ['tabular-nums'],
+  },
+  prefRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  prefCopy: {
+    flex: 1,
+  },
+  prefTitle: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 13,
+    color: Colors.ink,
+  },
+  prefSubtitle: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 11,
+    color: Colors.inkSoft,
+    marginTop: 2,
+  },
+  cardDivider: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+  },
+  switchTrack: {
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    padding: 2,
+    justifyContent: 'center',
+  },
+  switchTrackOn: {
+    backgroundColor: Colors.matcha,
+  },
+  switchTrackOff: {
+    backgroundColor: 'rgba(18, 20, 23, 0.20)',
+  },
+  switchThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: Colors.ink,
+  },
+  switchThumbOn: {
+    transform: [{ translateX: 20 }],
+  },
+  switchThumbOff: {
+    transform: [{ translateX: 0 }],
+  },
+  securityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  securityLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  securityIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: Radii.md,
+    backgroundColor: Colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  securityCopy: {
+    flex: 1,
+  },
+  signOutBtn: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: Radii.xl,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.2,
+    borderColor: Colors.dangerOutlineStrong,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  signOutPressed: {
+    backgroundColor: Colors.dangerSoftBg,
+    transform: [{ scale: 0.99 }],
+  },
+  signOutText: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 13,
+    color: Colors.danger,
   },
   pressed: {
     opacity: 0.8,
