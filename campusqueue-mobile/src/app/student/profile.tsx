@@ -4,6 +4,8 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ChangePasswordModal } from '../../components/profile/ChangePasswordModal';
+import { LogoutConfirmModal } from '../../components/profile/LogoutConfirmModal';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
@@ -29,10 +31,20 @@ function TactileSwitch({ value, onToggle, accessibilityLabel }: TactileSwitchPro
 
 export default function StudentProfileScreen() {
   const router = useRouter();
-  const { studentProfile, togglePushAlerts, toggleSoundAndHaptics, triggerHaptic } = useQueue();
+  const {
+    authDefaults,
+    studentProfile,
+    accountPassword,
+    updatePassword,
+    togglePushAlerts,
+    toggleSoundAndHaptics,
+    bumpLoginReset,
+    showToast,
+    triggerHaptic,
+  } = useQueue();
 
-  const [, setShowChangePwdModal] = useState(false);
-  const [, setShowLogoutModal] = useState(false);
+  const [showChangePwdModal, setShowChangePwdModal] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -178,6 +190,31 @@ export default function StudentProfileScreen() {
           <Text style={styles.signOutText}>Sign Out</Text>
         </Pressable>
       </ScrollView>
+
+      <ChangePasswordModal
+        visible={showChangePwdModal}
+        currentAccountPassword={accountPassword}
+        minLength={authDefaults.minPasswordLength}
+        onClose={() => setShowChangePwdModal(false)}
+        onSavePassword={(newPwd) => {
+          updatePassword(newPwd);
+          setShowChangePwdModal(false);
+          triggerHaptic('success');
+          showToast('Password updated successfully', 'matcha');
+        }}
+      />
+
+      <LogoutConfirmModal
+        visible={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirmSignOut={() => {
+          setShowLogoutModal(false);
+          bumpLoginReset();
+          triggerHaptic('light');
+          showToast('Signed out of CampusQueue', 'dark');
+          router.replace('/auth/login');
+        }}
+      />
     </SafeAreaView>
   );
 }
