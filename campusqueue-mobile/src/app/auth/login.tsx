@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,20 +9,76 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CampusQueueEmblem } from '../../components/CampusQueueEmblem';
+import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
-/**
- * Screen 1: Unified Login Screen (/auth/login)
- * Inputs strictly initialize empty per prototype specification.
- */
 export default function LoginScreen() {
+  const router = useRouter();
+  const {
+    authDefaults,
+    studentProfile,
+    accountPassword,
+    mustChangePassword,
+    loginResetNonce,
+    showToast,
+    triggerHaptic,
+  } = useQueue();
+
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [rememberSession, setRememberSession] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [showFirstLoginModal, setShowFirstLoginModal] = useState(false);
+  const [showForgotModal, setShowForgotModal] = useState(false);
+
+  useEffect(() => {
+    setIdentifier('');
+    setPassword('');
+    setErrorMsg('');
+    setShowPwd(false);
+    setShowFirstLoginModal(false);
+    setShowForgotModal(false);
+  }, [loginResetNonce]);
+
+  const handleSignIn = () => {
+    setErrorMsg('');
+
+    const trimmedUsn = identifier.trim();
+    if (!trimmedUsn || !password) {
+      setErrorMsg('Please enter your USN and password.');
+      triggerHaptic('warning');
+      return;
+    }
+
+    setIsLoading(true);
+    setTimeout(() => {
+      setIsLoading(false);
+
+      const isValidUsn = trimmedUsn === studentProfile.usn;
+      const isValidPassword = password === accountPassword;
+
+      if (!isValidUsn || !isValidPassword) {
+        setErrorMsg('Invalid USN or password. Please try again.');
+        triggerHaptic('warning');
+        return;
+      }
+
+      if (password === authDefaults.defaultPassword && mustChangePassword) {
+        setShowFirstLoginModal(true);
+        return;
+      }
+
+      triggerHaptic('success');
+      showToast(`Welcome back, ${studentProfile.firstName}!`, 'matcha');
+      router.replace('/student/home');
+    }, 400);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -35,33 +92,37 @@ export default function LoginScreen() {
           <View style={styles.header}>
             <CampusQueueEmblem />
             <Text style={styles.brandTitle}>CampusQueue</Text>
-            <Text style={styles.brandSubtitle}>ACLC College of Mandaue</Text>
+            <Text style={styles.brandSubtitle}>{studentProfile.institution}</Text>
           </View>
 
-          {/* Clean Minimal Unified Sign-In Card */}
+          {/* Sign-In Card */}
           <View style={[styles.card, Shadows.card]}>
-            {/* USN Input */}
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>USN</Text>
               <TextInput
                 value={identifier}
-                onChangeText={setIdentifier}
+                onChangeText={(text) => {
+                  setIdentifier(text);
+                  if (errorMsg) setErrorMsg('');
+                }}
                 placeholder="Enter your USN"
                 placeholderTextColor="rgba(18, 20, 23, 0.40)"
                 keyboardType="number-pad"
                 autoCapitalize="none"
                 autoCorrect={false}
-                style={[styles.input, styles.inputMono]}
+                style={[styles.input, identifier.length > 0 && styles.inputMono]}
               />
             </View>
 
-            {/* Password Input with Eye Toggle */}
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Password</Text>
               <View style={styles.passwordWrap}>
                 <TextInput
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(text) => {
+                    setPassword(text);
+                    if (errorMsg) setErrorMsg('');
+                  }}
                   placeholder="Enter your password"
                   placeholderTextColor="rgba(18, 20, 23, 0.40)"
                   secureTextEntry={!showPwd}
@@ -103,24 +164,38 @@ export default function LoginScreen() {
                 <Text style={styles.rememberText}>Remember session</Text>
               </Pressable>
 
-              <Pressable onPress={() => undefined} hitSlop={6}>
+              <Pressable onPress={() => setShowForgotModal(true)} hitSlop={6}>
                 <Text style={styles.forgotLink}>Forgot Password?</Text>
               </Pressable>
             </View>
 
-            {/* Primary Obsidian Sign In Button */}
+            {errorMsg ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorBannerText}>{errorMsg}</Text>
+              </View>
+            ) : null}
+
             <Pressable
-              onPress={() => undefined}
+              onPress={handleSignIn}
+              disabled={isLoading}
               style={({ pressed }) => [
                 styles.signInButton,
-                pressed && styles.signInButtonPressed,
+                isLoading && styles.signInButtonDisabled,
+                pressed && !isLoading && styles.signInButtonPressed,
               ]}
             >
-              <Text style={styles.signInText}>Sign In</Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={Colors.matcha} />
+              ) : null}
+              <Text style={styles.signInText}>
+                {isLoading ? 'Signing in...' : 'Sign In'}
+              </Text>
             </Pressable>
           </View>
         </View>
       </ScrollView>
+
+      {showFirstLoginModal || showForgotModal ? null : null}
     </SafeAreaView>
   );
 }
@@ -238,6 +313,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.registrar,
   },
+  errorBanner: {
+    borderRadius: Radii.md,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  errorBannerText: {
+    fontFamily: Fonts.bodySemiBold,
+    fontSize: 11.5,
+    color: Colors.danger,
+  },
   signInButton: {
     width: '100%',
     paddingVertical: 14,
@@ -247,6 +335,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+  },
+  signInButtonDisabled: {
+    opacity: 0.8,
   },
   signInButtonPressed: {
     backgroundColor: Colors.inkHover,
