@@ -13,6 +13,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CampusQueueEmblem } from '../../components/CampusQueueEmblem';
+import { FirstLoginPasswordModal } from '../../components/login/FirstLoginPasswordModal';
+import { ForgotPasswordModal } from '../../components/login/ForgotPasswordModal';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
@@ -24,6 +26,7 @@ export default function LoginScreen() {
     accountPassword,
     mustChangePassword,
     loginResetNonce,
+    updatePassword,
     showToast,
     triggerHaptic,
   } = useQueue();
@@ -195,7 +198,34 @@ export default function LoginScreen() {
         </View>
       </ScrollView>
 
-      {showFirstLoginModal || showForgotModal ? null : null}
+      <FirstLoginPasswordModal
+        visible={showFirstLoginModal}
+        defaultPassword={authDefaults.defaultPassword}
+        minLength={authDefaults.minPasswordLength}
+        onSkip={() => {
+          setShowFirstLoginModal(false);
+          triggerHaptic('success');
+          showToast(`Welcome back, ${studentProfile.firstName}!`, 'matcha');
+          router.replace('/student/home');
+        }}
+        onUpdatePassword={(newPwd) => {
+          updatePassword(newPwd);
+          setShowFirstLoginModal(false);
+          triggerHaptic('success');
+          showToast('Password updated successfully', 'matcha');
+          router.replace('/student/home');
+        }}
+      />
+
+      <ForgotPasswordModal
+        visible={showForgotModal}
+        onClose={() => setShowForgotModal(false)}
+        onSendResetLink={(email) => {
+          setShowForgotModal(false);
+          triggerHaptic('light');
+          showToast(`Password reset link sent to ${email}`, 'dark');
+        }}
+      />
     </SafeAreaView>
   );
 }
