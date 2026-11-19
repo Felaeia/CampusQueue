@@ -5,8 +5,10 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DieCutNotch } from '../../components/DieCutNotch';
+import { OfficeCard } from '../../components/home/OfficeCard';
 import { RadarPulseDot } from '../../components/RadarPulseDot';
 import { useQueue } from '../../context/QueueContext';
+import { ActiveTicket, Office } from '../../types/queue';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
 export default function StudentHomeScreen() {
@@ -20,6 +22,8 @@ export default function StudentHomeScreen() {
     triggerHaptic,
   } = useQueue();
 
+  const [, setRequestSheetOffice] = useState<Office | null>(null);
+  const [, setConflictTicket] = useState<ActiveTicket | null>(null);
   const [, setShowNotifDrawer] = useState(false);
 
   const primaryActive = activeTickets[0] ?? null;
@@ -28,6 +32,17 @@ export default function StudentHomeScreen() {
     setSelectedTicketId(ticketId);
     triggerHaptic('light');
     router.replace('/student/ticket');
+  };
+
+  const handleRequestTicketTrigger = (office: Office) => {
+    const existing = activeTickets.find((t) => t.officeId === office.id);
+    if (existing) {
+      triggerHaptic('warning');
+      setConflictTicket(existing);
+      return;
+    }
+    triggerHaptic('light');
+    setRequestSheetOffice(office);
   };
 
   return (
@@ -123,6 +138,25 @@ export default function StudentHomeScreen() {
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>CAMPUS OFFICES</Text>
           <Text style={styles.sectionCount}>{offices.length} OPEN NOW</Text>
+        </View>
+
+        {/* Campus Office Cards */}
+        <View style={styles.officesList}>
+          {offices.map((office) => {
+            const activeForOffice = activeTickets.find((t) => t.officeId === office.id);
+            return (
+              <OfficeCard
+                key={office.id}
+                office={office}
+                activeTicket={activeForOffice}
+                onPressCard={handleRequestTicketTrigger}
+                onPressActiveTicket={(ticket) => {
+                  triggerHaptic('warning');
+                  setConflictTicket(ticket);
+                }}
+              />
+            );
+          })}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -321,5 +355,8 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: Colors.inkSoft,
     fontVariant: ['tabular-nums'],
+  },
+  officesList: {
+    gap: 12,
   },
 });
