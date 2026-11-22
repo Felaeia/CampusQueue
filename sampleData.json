@@ -1,0 +1,160 @@
+{
+  "desk": {
+    "staffName": "Ms. Medonza",
+    "staffId": "EMP-1042",
+    "office": "ACLC Mandaue - Registrar",
+    "initialCounterWindow": "Window 2",
+    "initialElapsedSeconds": 252,
+    "services": [
+      "All Services",
+      "TOR Request",
+      "Enrollment Validation",
+      "Study Load Printout"
+    ],
+    "initialServing": {
+      "id": "t-039",
+      "ticketNumber": "R-039",
+      "studentName": "Manuel Cando",
+      "usn": "230012349910",
+      "program": "BSIT - 4th Year",
+      "serviceType": "TOR Request",
+      "waitMinutes": 14,
+      "issuedAt": "09:30 AM",
+      "isQrVerified": false
+    },
+    "initialWaiting": [
+      {
+        "id": "t-040",
+        "ticketNumber": "R-040",
+        "studentName": "Weah Jacinto",
+        "usn": "230012348821",
+        "program": "BSIT - 4th Year",
+        "serviceType": "Enrollment Validation",
+        "waitMinutes": 12,
+        "issuedAt": "09:38 AM",
+        "notes": "For scholarship renewal requirement",
+        "isQrVerified": false
+      },
+      {
+        "id": "t-041",
+        "ticketNumber": "R-041",
+        "studentName": "Michelle Bulahan",
+        "usn": "230012347743",
+        "program": "BSIT - 4th Year",
+        "serviceType": "Study Load Printout",
+        "waitMinutes": 8,
+        "issuedAt": "09:41 AM",
+        "isQrVerified": false
+      },
+      {
+        "id": "t-042",
+        "ticketNumber": "R-042",
+        "studentName": "Elgin Karl Lastimoso",
+        "usn": "230012349237",
+        "program": "BSIT - 4th Year",
+        "serviceType": "TOR Request",
+        "waitMinutes": 5,
+        "issuedAt": "09:45 AM",
+        "isQrVerified": false
+      }
+    ]
+  },
+  "scanner": {
+    "expectedTicket": "R-039",
+    "manualUsnSuffix": "9910",
+    "verifiedTicket": {
+      "ticketNumber": "R-039",
+      "studentName": "Manuel Cando",
+      "usn": "230012349910",
+      "program": "BSIT - 4th Year",
+      "serviceType": "TOR Request",
+      "issuedAt": "09:30 AM"
+    },
+    "wrongOfficeError": "Wrong Office: This ticket is issued for the Accounting Office, not the Registrar Office.",
+    "invalidQrError": "Invalid or Expired QR Code: Unable to verify ticket signature against active Registrar queue.",
+    "manualInputError": "Please enter a valid Ticket Number (e.g., R-039) and the 4-digit USN suffix.",
+    "manualPlaceholder": "R-039",
+    "usnPlaceholder": "9910"
+  },
+  "logs": {
+    "staffName": "Ms. Medonza",
+    "staffId": "EMP-1042",
+    "office": "Registrar Office",
+    "counter": "Window 2",
+    "summaryTitle": "CAMPUSQUEUE SHIFT SUMMARY - ACLC COLLEGE OF MANDAUE",
+    "filterTabs": [
+      "My Counter Only",
+      "All Office Counters",
+      "Skipped Only"
+    ],
+    "kpis": {
+      "servedByMe": "34",
+      "officeCompleted": "68",
+      "skipped": "3",
+      "averageService": "04m 45s"
+    },
+    "transactions": [
+      {
+        "id": "tx-101",
+        "ticketNumber": "R-038",
+        "studentName": "James Ryan Maguinda",
+        "usn": "230012345512",
+        "serviceType": "TOR Request",
+        "outcome": "Completed",
+        "counterWindow": "Window 2",
+        "staffName": "Ms. Medonza",
+        "issuedAt": "09:12 AM",
+        "calledAt": "09:34 AM",
+        "verifiedAt": "09:35 AM",
+        "closedAt": "09:39 AM",
+        "durationFormatted": "04m 18s",
+        "remarks": "Official TOR released with dry seal."
+      },
+      {
+        "id": "tx-102",
+        "ticketNumber": "R-037",
+        "studentName": "Jan Rosalijos",
+        "usn": "230012346109",
+        "serviceType": "Enrollment Validation",
+        "outcome": "Completed",
+        "counterWindow": "Window 2",
+        "staffName": "Ms. Medonza",
+        "issuedAt": "09:05 AM",
+        "calledAt": "09:28 AM",
+        "verifiedAt": "09:29 AM",
+        "closedAt": "09:33 AM",
+        "durationFormatted": "04m 52s"
+      },
+      {
+        "id": "tx-103",
+        "ticketNumber": "R-036",
+        "studentName": "Andrea Reyes",
+        "usn": "230012341188",
+        "serviceType": "Good Moral Certificate",
+        "outcome": "Skipped",
+        "counterWindow": "Window 2",
+        "staffName": "Ms. Medonza",
+        "issuedAt": "08:58 AM",
+        "calledAt": "09:20 AM",
+        "closedAt": "09:27 AM",
+        "durationFormatted": "07m 00s",
+        "remarks": "Student did not appear after 3 recalls."
+      },
+      {
+        "id": "tx-104",
+        "ticketNumber": "R-035",
+        "studentName": "Christian Dela Cruz",
+        "usn": "230012343340",
+        "serviceType": "Study Load Printout",
+        "outcome": "Completed",
+        "counterWindow": "Window 1",
+        "staffName": "Mr. Lim",
+        "issuedAt": "08:50 AM",
+        "calledAt": "09:14 AM",
+        "verifiedAt": "09:15 AM",
+        "closedAt": "09:18 AM",
+        "durationFormatted": "03m 45s"
+      }
+    ]
+  }
+}
