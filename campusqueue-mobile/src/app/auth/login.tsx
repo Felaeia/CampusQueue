@@ -30,9 +30,9 @@ export default function LoginScreen() {
   const {
     authDefaults,
     studentProfile,
-    accountPassword,
-    mustChangePassword,
     loginResetNonce,
+    loginStudent,
+    loginStaff,
     updatePassword,
     showToast,
     triggerHaptic,
@@ -61,9 +61,9 @@ export default function LoginScreen() {
   const handleSignIn = () => {
     setErrorMsg('');
 
-    const trimmedUsn = identifier.trim();
-    if (!trimmedUsn || !password) {
-      setErrorMsg('Please enter your USN and password.');
+    const trimmedId = identifier.trim();
+    if (!trimmedId || !password) {
+      setErrorMsg('Please enter your USN / Staff ID and password.');
       triggerHaptic('warning');
       return;
     }
@@ -72,22 +72,28 @@ export default function LoginScreen() {
     setTimeout(() => {
       setIsLoading(false);
 
-      const isValidUsn = trimmedUsn === studentProfile.usn;
-      const isValidPassword = password === accountPassword;
+      const staffResult = loginStaff(trimmedId, password);
+      if (staffResult.ok && staffResult.staff) {
+        triggerHaptic('success');
+        showToast(`Welcome back, ${staffResult.staff.staffName}!`, 'matcha');
+        router.replace('/staff/registrar');
+        return;
+      }
 
-      if (!isValidUsn || !isValidPassword) {
-        setErrorMsg('Invalid USN or password. Please try again.');
+      const studentResult = loginStudent(trimmedId, password);
+      if (!studentResult.ok || !studentResult.profile) {
+        setErrorMsg('Invalid USN / Staff ID or password. Please try again.');
         triggerHaptic('warning');
         return;
       }
 
-      if (password === authDefaults.defaultPassword && mustChangePassword) {
+      if (studentResult.requiresPasswordChange) {
         setShowFirstLoginModal(true);
         return;
       }
 
       triggerHaptic('success');
-      showToast(`Welcome back, ${studentProfile.firstName}!`, 'matcha');
+      showToast(`Welcome back, ${studentResult.profile.firstName}!`, 'matcha');
       router.replace('/student/home');
     }, 400);
   };
@@ -113,9 +119,9 @@ export default function LoginScreen() {
 
             {/* Clean Minimal Unified Sign-In Card */}
             <View style={[styles.card, Shadows.card]}>
-              {/* USN Input */}
+              {/* USN / Staff ID Input */}
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>USN</Text>
+                <Text style={styles.label}>USN / Staff ID</Text>
                 <TextInput
                   value={identifier}
                   onChangeText={(text) => {
@@ -124,9 +130,9 @@ export default function LoginScreen() {
                   }}
                   onFocus={() => setFocusedField('usn')}
                   onBlur={() => setFocusedField(null)}
-                  placeholder="Enter your USN"
+                  placeholder="Enter your USN or Staff ID"
                   placeholderTextColor="rgba(18, 20, 23, 0.40)"
-                  keyboardType="number-pad"
+                  keyboardType="default"
                   returnKeyType="next"
                   onSubmitEditing={() => passwordInputRef.current?.focus()}
                   autoCapitalize="none"
