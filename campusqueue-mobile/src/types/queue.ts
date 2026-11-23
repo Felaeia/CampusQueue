@@ -65,7 +65,9 @@ export interface ActiveTicket {
   status: ActiveTicketStatus;
   service: string;
   holderShort: string;
+  studentUsn: string;
   serial: string;
+  qrPayload: string;
   issuedAt: string;
   estWaitMins: number;
   aheadCount: number;
@@ -110,9 +112,20 @@ export interface IssueTicketInput {
   notes?: string;
 }
 
+export interface StudentAccountSeed {
+  profile: StudentProfile;
+  password: string;
+  mustChangePassword: boolean;
+  historicalBasePassCount: number;
+  activeTickets: ActiveTicket[];
+  historyTickets: HistoryTicket[];
+  notifications: NotificationItem[];
+}
+
 export interface MockDataBundle {
   authDefaults: AuthDefaults;
   studentProfile: StudentProfile;
+  studentAccounts: StudentAccountSeed[];
   offices: Office[];
   activeTickets: ActiveTicket[];
   historyTickets: HistoryTicket[];
