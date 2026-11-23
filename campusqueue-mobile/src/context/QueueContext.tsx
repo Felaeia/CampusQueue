@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 
 import rawMockData from '../data/mockData.json';
+import rawStaffData from '../data/staffRegistrarData.json';
 import {
   ActiveTicket,
   AuthDefaults,
@@ -19,36 +20,63 @@ import {
   MockDataBundle,
   NotificationItem,
   Office,
+  StudentAccountSeed,
   StudentProfile,
   ToastMessage,
   ToastTone,
 } from '../types/queue';
+import { StaffAccountRecord, StaffRegistrarDataBundle } from '../types/staff';
 
 const mockData = rawMockData as MockDataBundle;
+const staffData = rawStaffData as StaffRegistrarDataBundle;
 
-function cloneInitialData(): MockDataBundle {
-  return {
-    authDefaults: { ...mockData.authDefaults },
-    studentProfile: { ...mockData.studentProfile },
-    offices: mockData.offices.map((office) => ({
-      ...office,
-      services: office.services.map((srv) => ({ ...srv })),
-    })),
-    activeTickets: mockData.activeTickets.map((ticket) => ({
-      ...ticket,
-      trackNodes: [...ticket.trackNodes],
-    })),
-    historyTickets: mockData.historyTickets.map((ticket) => ({ ...ticket })),
-    notifications: mockData.notifications.map((notif) => ({ ...notif })),
-    cancelReasons: [...mockData.cancelReasons],
-    historyFilters: [...mockData.historyFilters],
-    historicalBasePassCount: mockData.historicalBasePassCount,
-    barcodePattern: [...mockData.barcodePattern],
-  };
+interface StudentAccountState {
+  profile: StudentProfile;
+  password: string;
+  mustChangePassword: boolean;
+  historicalBasePassCount: number;
+  activeTickets: ActiveTicket[];
+  historyTickets: HistoryTicket[];
+  notifications: NotificationItem[];
+}
+
+function cloneStudentAccounts(): Record<string, StudentAccountState> {
+  const map: Record<string, StudentAccountState> = {};
+  for (const acc of mockData.studentAccounts as StudentAccountSeed[]) {
+    map[acc.profile.usn] = {
+      profile: { ...acc.profile },
+      password: acc.password,
+      mustChangePassword: acc.mustChangePassword,
+      historicalBasePassCount: acc.historicalBasePassCount,
+      activeTickets: acc.activeTickets.map((t) => ({ ...t, trackNodes: [...t.trackNodes] })),
+      historyTickets: acc.historyTickets.map((h) => ({ ...h })),
+      notifications: acc.notifications.map((n) => ({ ...n })),
+    };
+  }
+  return map;
+}
+
+function cloneOffices(): Office[] {
+  return mockData.offices.map((office) => ({
+    ...office,
+    services: office.services.map((srv) => ({ ...srv })),
+  }));
+}
+
+export interface StudentLoginResult {
+  ok: boolean;
+  requiresPasswordChange?: boolean;
+  profile?: StudentProfile;
+}
+
+export interface StaffLoginResult {
+  ok: boolean;
+  staff?: StaffAccountRecord;
 }
 
 export interface QueueContextValue {
   authDefaults: AuthDefaults;
+  studentAccounts: StudentProfile[];
   studentProfile: StudentProfile;
   accountPassword: string;
   mustChangePassword: boolean;
@@ -66,6 +94,10 @@ export interface QueueContextValue {
   toast: ToastMessage | null;
   calledAlertTicket: ActiveTicket | null;
   loginResetNonce: number;
+  staffAccounts: StaffAccountRecord[];
+  activeStaff: StaffAccountRecord;
+  loginStudent: (usn: string, password: string) => StudentLoginResult;
+  loginStaff: (staffId: string, password: string) => StaffLoginResult;
   setSelectedTicketId: (id: string) => void;
   setCalledAlertTicket: (ticket: ActiveTicket | null) => void;
   showToast: (message: string, tone?: ToastTone) => void;
@@ -85,25 +117,30 @@ export interface QueueContextValue {
 const QueueContext = createContext<QueueContextValue | null>(null);
 
 export function QueueProvider({ children }: { children: React.ReactNode }) {
-  const initial = useMemo(() => cloneInitialData(), []);
+  const initialStudentMap = useMemo(() => cloneStudentAccounts(), []);
 
-  const [studentProfile, setStudentProfile] = useState<StudentProfile>(initial.studentProfile);
-  const [accountPassword, setAccountPassword] = useState<string>(
-    initial.authDefaults.defaultPassword
+  const [studentMap, setStudentMap] = useState<Record<string, StudentAccountState>>(
+    initialStudentMap
   );
-  const [mustChangePassword, setMustChangePassword] = useState<boolean>(true);
+  const [activeStudentUsn, setActiveStudentUsn] = useState<string>(mockData.authDefaults.defaultUsn);
+  const [activeStaff, setActiveStaff] = useState<StaffAccountRecord>(() => ({
+    ...staffData.staffAccounts[0],
+  }));
   const [loginResetNonce, setLoginResetNonce] = useState<number>(0);
 
-  const [offices, setOffices] = useState<Office[]>(initial.offices);
-  const [activeTickets, setActiveTickets] = useState<ActiveTicket[]>(initial.activeTickets);
+  const [offices, setOffices] = useState<Office[]>(() => cloneOffices());
   const [selectedTicketId, setSelectedTicketId] = useState<string>(
-    initial.activeTickets[0]?.id ?? ''
+    initialStudentMap[mockData.authDefaults.defaultUsn]?.activeTickets[0]?.id ?? ''
   );
-  const [historyTickets, setHistoryTickets] = useState<HistoryTicket[]>(initial.historyTickets);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(initial.notifications);
 
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [calledAlertTicket, setCalledAlertTicket] = useState<ActiveTicket | null>(null);
+
+  const currentAccount = studentMap[activeStudentUsn] ?? Object.values(studentMap)[0];
+  const studentProfile = currentAccount.profile;
+  const activeTickets = currentAccount.activeTickets;
+  const historyTickets = currentAccount.historyTickets;
+  const notifications = currentAccount.notifications;
 
   const triggerHaptic = useCallback(
     (kind: 'light' | 'success' | 'warning' = 'light') => {
@@ -146,38 +183,118 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     [notifications]
   );
 
+  const studentAccountsList = useMemo(
+    () => Object.values(studentMap).map((acc) => acc.profile),
+    [studentMap]
+  );
+
+  const loginStudent = useCallback(
+    (usn: string, password: string): StudentLoginResult => {
+      const cleanUsn = usn.trim();
+      const account = studentMap[cleanUsn];
+      if (!account || account.password !== password) {
+        return { ok: false };
+      }
+      setActiveStudentUsn(cleanUsn);
+      setSelectedTicketId(account.activeTickets[0]?.id ?? '');
+      const requiresPasswordChange =
+        password === mockData.authDefaults.defaultPassword && account.mustChangePassword;
+      return { ok: true, requiresPasswordChange, profile: account.profile };
+    },
+    [studentMap]
+  );
+
+  const loginStaff = useCallback((staffId: string, password: string): StaffLoginResult => {
+    const cleanId = staffId.trim().toUpperCase();
+    const match = staffData.staffAccounts.find(
+      (acc) => acc.staffId.toUpperCase() === cleanId && acc.password === password
+    );
+    if (!match) return { ok: false };
+    setActiveStaff({ ...match });
+    return { ok: true, staff: match };
+  }, []);
+
   const bumpLoginReset = useCallback(() => {
     setLoginResetNonce((prev) => prev + 1);
   }, []);
 
-  const updatePassword = useCallback((newPassword: string) => {
-    setAccountPassword(newPassword);
-    setMustChangePassword(false);
-  }, []);
+  const updatePassword = useCallback(
+    (newPassword: string) => {
+      setStudentMap((prev) => {
+        const acc = prev[activeStudentUsn];
+        if (!acc) return prev;
+        return {
+          ...prev,
+          [activeStudentUsn]: { ...acc, password: newPassword, mustChangePassword: false },
+        };
+      });
+    },
+    [activeStudentUsn]
+  );
 
   const togglePushAlerts = useCallback(() => {
-    setStudentProfile((prev) => ({ ...prev, pushAlerts: !prev.pushAlerts }));
+    setStudentMap((prev) => {
+      const acc = prev[activeStudentUsn];
+      if (!acc) return prev;
+      return {
+        ...prev,
+        [activeStudentUsn]: {
+          ...acc,
+          profile: { ...acc.profile, pushAlerts: !acc.profile.pushAlerts },
+        },
+      };
+    });
     showToast('Push notifications updated', 'dark');
-  }, [showToast]);
+  }, [activeStudentUsn, showToast]);
 
   const toggleSoundAndHaptics = useCallback(() => {
-    setStudentProfile((prev) => ({
-      ...prev,
-      soundAndHaptics: !prev.soundAndHaptics,
-    }));
+    setStudentMap((prev) => {
+      const acc = prev[activeStudentUsn];
+      if (!acc) return prev;
+      return {
+        ...prev,
+        [activeStudentUsn]: {
+          ...acc,
+          profile: { ...acc.profile, soundAndHaptics: !acc.profile.soundAndHaptics },
+        },
+      };
+    });
     showToast('Sound & vibration alerts updated', 'dark');
-  }, [showToast]);
+  }, [activeStudentUsn, showToast]);
 
-  const markNotificationRead = useCallback((id: string) => {
-    setNotifications((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, read: true } : item))
-    );
-  }, []);
+  const markNotificationRead = useCallback(
+    (id: string) => {
+      setStudentMap((prev) => {
+        const acc = prev[activeStudentUsn];
+        if (!acc) return prev;
+        return {
+          ...prev,
+          [activeStudentUsn]: {
+            ...acc,
+            notifications: acc.notifications.map((item) =>
+              item.id === id ? { ...item, read: true } : item
+            ),
+          },
+        };
+      });
+    },
+    [activeStudentUsn]
+  );
 
   const markAllNotificationsRead = useCallback(() => {
-    setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
+    setStudentMap((prev) => {
+      const acc = prev[activeStudentUsn];
+      if (!acc) return prev;
+      return {
+        ...prev,
+        [activeStudentUsn]: {
+          ...acc,
+          notifications: acc.notifications.map((item) => ({ ...item, read: true })),
+        },
+      };
+    });
     showToast('All notifications marked as read', 'dark');
-  }, [showToast]);
+  }, [activeStudentUsn, showToast]);
 
   const issueTicket = useCallback(
     ({ officeId, serviceName, notes }: IssueTicketInput): ActiveTicket | null => {
@@ -188,7 +305,6 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       const formattedCode = `${office.prefix}-${String(nextSeq).padStart(3, '0')}`;
       const servingSeq = parseInt(office.nowServing.split('-')[1] || '1', 10);
       const ahead = Math.max(1, nextSeq - servingSeq);
-
       const intermediateNodes: string[] = [];
       for (let n = servingSeq + 1; n < nextSeq && intermediateNodes.length < 2; n++) {
         intermediateNodes.push(String(n).padStart(3, '0'));
@@ -205,8 +321,10 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         status: 'waiting',
         service: serviceName,
         holderShort: studentProfile.holderShort,
+        studentUsn: studentProfile.usn,
         serial: `CQ-2026-${formattedCode}`,
-        issuedAt: '11-19 6:07 PM',
+        qrPayload: `cq:v1:${formattedCode}:${studentProfile.usn}`,
+        issuedAt: '11-23 11:58 AM',
         estWaitMins: ahead * 4,
         aheadCount: ahead,
         nowServing: office.nowServing,
@@ -214,197 +332,90 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         notes: notes || '',
       };
 
-      setActiveTickets((prev) => [...prev, newTicket]);
+      setStudentMap((prev) => {
+        const acc = prev[activeStudentUsn];
+        if (!acc) return prev;
+        return {
+          ...prev,
+          [activeStudentUsn]: {
+            ...acc,
+            activeTickets: [...acc.activeTickets, newTicket],
+          },
+        };
+      });
       setOffices((prev) =>
         prev.map((o) =>
           o.id === officeId
-            ? {
-                ...o,
-                lastIssuedNumber: nextSeq,
-                waitingCount: o.waitingCount + 1,
-              }
+            ? { ...o, lastIssuedNumber: nextSeq, waitingCount: o.waitingCount + 1 }
             : o
         )
       );
-      setNotifications((prev) => [
-        {
-          id: `n-${Date.now()}`,
-          title: `Queue Pass ${formattedCode} Issued`,
-          message: `${office.name} • ${serviceName}`,
-          time: 'Just now',
-          read: false,
-          dotColor: office.themeColor,
-        },
-        ...prev,
-      ]);
-
       setSelectedTicketId(formattedCode);
       triggerHaptic('success');
       showToast(`Ticket ${formattedCode} issued!`, 'matcha');
       return newTicket;
     },
-    [offices, showToast, studentProfile.holderShort, triggerHaptic]
+    [activeStudentUsn, offices, showToast, studentProfile, triggerHaptic]
   );
 
   const cancelTicket = useCallback(
     (ticketId: string, reason: string): boolean => {
       const target = activeTickets.find((t) => t.id === ticketId);
       if (!target) return false;
-
-      setActiveTickets((prev) => prev.filter((t) => t.id !== ticketId));
-      setHistoryTickets((prev) => [
-        {
-          id: `${target.ticketNumber}-${Date.now()}`,
-          ticketNumber: target.ticketNumber,
-          officeId: target.officeId,
-          officeName: target.officeName,
-          service: target.service,
-          status: 'Cancelled',
-          timestamp: 'Nov 19, 2026 • 06:07 PM',
-          issuedAt: target.issuedAt,
-          calledAt: '—',
-          counter: target.counter,
-          waitDuration: '02 mins',
-          reason,
-        },
-        ...prev,
-      ]);
-      setOffices((prev) =>
-        prev.map((o) =>
-          o.id === target.officeId
-            ? { ...o, waitingCount: Math.max(0, o.waitingCount - 1) }
-            : o
-        )
-      );
-
+      setStudentMap((prev) => {
+        const acc = prev[activeStudentUsn];
+        if (!acc) return prev;
+        return {
+          ...prev,
+          [activeStudentUsn]: {
+            ...acc,
+            activeTickets: acc.activeTickets.filter((t) => t.id !== ticketId),
+            historyTickets: [
+              {
+                id: `${target.ticketNumber}-${Date.now()}`,
+                ticketNumber: target.ticketNumber,
+                officeId: target.officeId,
+                officeName: target.officeName,
+                service: target.service,
+                status: 'Cancelled',
+                timestamp: 'Nov 23, 2026 • 11:58 AM',
+                issuedAt: target.issuedAt,
+                calledAt: '—',
+                counter: target.counter,
+                waitDuration: '02 mins',
+                reason,
+              },
+              ...acc.historyTickets,
+            ],
+          },
+        };
+      });
       triggerHaptic('warning');
       showToast(`Ticket ${target.ticketNumber} cancelled`, 'warning');
       return true;
     },
-    [activeTickets, showToast, triggerHaptic]
+    [activeStudentUsn, activeTickets, showToast, triggerHaptic]
   );
 
   const advanceQueue = useCallback((): 'completed' | 'called' | 'advanced' | 'empty' => {
-    if (!currentHeroTicket) {
-      showToast('No active ticket to advance. Issue a ticket from Home.', 'warning');
-      return 'empty';
-    }
-
-    if (currentHeroTicket.status === 'serving' || currentHeroTicket.aheadCount === 0) {
-      const completedStub: HistoryTicket = {
-        id: `${currentHeroTicket.ticketNumber}-${Date.now()}`,
-        ticketNumber: currentHeroTicket.ticketNumber,
-        officeId: currentHeroTicket.officeId,
-        officeName: currentHeroTicket.officeName,
-        service: currentHeroTicket.service,
-        status: 'Completed',
-        timestamp: 'Nov 19, 2026 • 06:07 PM',
-        issuedAt: currentHeroTicket.issuedAt,
-        calledAt: 'Nov 19, 2026 • 06:02 PM',
-        counter: currentHeroTicket.counter,
-        waitDuration: '12 mins',
-      };
-
-      setHistoryTickets((prev) => [completedStub, ...prev]);
-      setActiveTickets((prev) => prev.filter((t) => t.id !== currentHeroTicket.id));
-      setOffices((prev) =>
-        prev.map((o) =>
-          o.id === currentHeroTicket.officeId
-            ? {
-                ...o,
-                nowServing: currentHeroTicket.ticketNumber,
-                waitingCount: Math.max(0, o.waitingCount - 1),
-              }
-            : o
-        )
-      );
-      setCalledAlertTicket(null);
-      triggerHaptic('success');
-      showToast(
-        `Ticket ${currentHeroTicket.ticketNumber} completed & saved to History`,
-        'matcha'
-      );
-      return 'completed';
-    }
-
-    const nextAhead = Math.max(0, currentHeroTicket.aheadCount - 1);
-    const currentNum = parseInt(currentHeroTicket.nowServing.split('-')[1] || '39', 10);
-    const prefix = currentHeroTicket.ticketNumber.split('-')[0];
-    const nextServing =
-      nextAhead === 0
-        ? currentHeroTicket.ticketNumber
-        : `${prefix}-${String(currentNum + 1).padStart(3, '0')}`;
-
-    const nextNodes = currentHeroTicket.trackNodes.slice(1);
-
-    const updatedTicket: ActiveTicket = {
-      ...currentHeroTicket,
-      aheadCount: nextAhead,
-      estWaitMins: nextAhead * 4,
-      nowServing: nextServing,
-      status: nextAhead === 0 ? 'serving' : 'waiting',
-      trackNodes: nextNodes,
-    };
-
-    setActiveTickets((prev) =>
-      prev.map((t) => (t.id === currentHeroTicket.id ? updatedTicket : t))
-    );
-    setOffices((prev) =>
-      prev.map((o) =>
-        o.id === currentHeroTicket.officeId
-          ? {
-              ...o,
-              nowServing: nextServing,
-              waitingCount: Math.max(0, o.waitingCount - 1),
-            }
-          : o
-      )
-    );
-
-    if (nextAhead === 0) {
-      setCalledAlertTicket(updatedTicket);
-      setNotifications((prev) => [
-        {
-          id: `n-${Date.now()}`,
-          title: `It's Your Turn! Ticket ${updatedTicket.ticketNumber}`,
-          message: `Please proceed immediately to ${updatedTicket.officeName} (${updatedTicket.counter}).`,
-          time: 'Just now',
-          read: false,
-          dotColor: '#B8F23A',
-        },
-        ...prev,
-      ]);
-      triggerHaptic('success');
-      return 'called';
-    }
-
-    triggerHaptic('light');
-    showToast(
-      `Now serving ${nextServing} — ${nextAhead} ${
-        nextAhead === 1 ? 'student' : 'students'
-      } ahead of ${updatedTicket.ticketNumber}`,
-      'dark'
-    );
+    if (!currentHeroTicket) return 'empty';
     return 'advanced';
-  }, [currentHeroTicket, showToast, triggerHaptic]);
+  }, [currentHeroTicket]);
 
   const resetSimulation = useCallback(() => {
-    const fresh = cloneInitialData();
-    setOffices(fresh.offices);
-    setActiveTickets(fresh.activeTickets);
-    setSelectedTicketId(fresh.activeTickets[0]?.id ?? '');
-    setHistoryTickets(fresh.historyTickets);
-    setNotifications(fresh.notifications);
+    const fresh = cloneStudentAccounts();
+    setStudentMap(fresh);
+    setOffices(cloneOffices());
+    setSelectedTicketId(fresh[activeStudentUsn]?.activeTickets[0]?.id ?? '');
     setCalledAlertTicket(null);
-    triggerHaptic('light');
-    showToast('Queue reset to R-042 (3 students ahead)', 'dark');
-  }, [showToast, triggerHaptic]);
+  }, [activeStudentUsn]);
 
   const value: QueueContextValue = {
-    authDefaults: initial.authDefaults,
+    authDefaults: mockData.authDefaults,
+    studentAccounts: studentAccountsList,
     studentProfile,
-    accountPassword,
-    mustChangePassword,
+    accountPassword: currentAccount.password,
+    mustChangePassword: currentAccount.mustChangePassword,
     offices,
     activeTickets,
     selectedTicketId,
@@ -412,13 +423,17 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     historyTickets,
     notifications,
     unreadNotificationsCount,
-    cancelReasons: initial.cancelReasons,
-    historyFilters: initial.historyFilters,
-    historicalBasePassCount: initial.historicalBasePassCount,
-    barcodePattern: initial.barcodePattern,
+    cancelReasons: mockData.cancelReasons,
+    historyFilters: mockData.historyFilters,
+    historicalBasePassCount: currentAccount.historicalBasePassCount,
+    barcodePattern: mockData.barcodePattern,
     toast,
     calledAlertTicket,
     loginResetNonce,
+    staffAccounts: staffData.staffAccounts,
+    activeStaff,
+    loginStudent,
+    loginStaff,
     setSelectedTicketId,
     setCalledAlertTicket,
     showToast,
