@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueue } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
+import { DeskStatus, StaffQueueTicket } from '../../types/staff';
 
 export default function StaffQueueDesk() {
   const router = useRouter();
@@ -29,11 +31,29 @@ export default function StaffQueueDesk() {
     waitingQueue,
     elapsedSeconds,
     recallCount,
+    setCounterWindow,
+    setDeskStatus,
     callNext,
+    completeCurrent,
+    sendRecall,
+    skipCurrent,
   } = useStaffQueue();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedService, setSelectedService] = useState('All Services');
+  const [showCounterModal, setShowCounterModal] = useState(false);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [showRecallModal, setShowRecallModal] = useState(false);
+  const [showSkipModal, setShowSkipModal] = useState(false);
+  const [inspectedTicket, setInspectedTicket] = useState<StaffQueueTicket | null>(null);
+  const [staffRemarks, setStaffRemarks] = useState('');
+  const [skipReason, setSkipReason] = useState('Student did not appear after recall');
+
+  const formatTimer = (totalSeconds: number) => {
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${seconds}`;
+  };
 
   const filteredQueue = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -49,17 +69,46 @@ export default function StaffQueueDesk() {
     });
   }, [waitingQueue, selectedService, searchQuery]);
 
-  const formatTimer = (totalSeconds: number) => {
-    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-    return `${minutes}:${seconds}`;
-  };
-
   const handleCallNext = () => {
     const nextTicket = callNext();
     if (!nextTicket) return;
     triggerHaptic('success');
     showToast(`Now serving ${nextTicket.ticketNumber}`, 'matcha');
+  };
+
+  const handleCompleteCurrent = (advance: boolean) => {
+    const { completedNumber, nextTicket } = completeCurrent(advance, staffRemarks);
+    setShowCompleteModal(false);
+    setStaffRemarks('');
+    triggerHaptic('success');
+
+    if (nextTicket) {
+      showToast(`${completedNumber} completed. Now serving ${nextTicket.ticketNumber}.`, 'matcha');
+    } else {
+      showToast(`${completedNumber} completed.`, 'dark');
+    }
+  };
+
+  const handleSendRecall = () => {
+    sendRecall();
+    setShowRecallModal(false);
+    triggerHaptic('light');
+    showToast(`Recall alert sent to ${servingTicket?.ticketNumber}.`, 'dark');
+  };
+
+  const handleSkipCurrent = () => {
+    const { skippedNumber, nextTicket } = skipCurrent(skipReason);
+    setShowSkipModal(false);
+    triggerHaptic('warning');
+
+    if (nextTicket) {
+      showToast(
+        `Ticket ${skippedNumber} skipped. Now serving ${nextTicket.ticketNumber}.`,
+        'warning'
+      );
+    } else {
+      showToast(`Ticket ${skippedNumber} marked as skipped.`, 'warning');
+    }
   };
 
   const handleSignOut = () => {
@@ -120,7 +169,11 @@ export default function StaffQueueDesk() {
               <Ionicons name="qr-code-outline" size={18} color={Colors.surface} />
             </TouchableOpacity>
 
-            <View style={[styles.statusPill, { backgroundColor: statusConfig.bg }]}>
+            <TouchableOpacity
+              style={[styles.statusPill, { backgroundColor: statusConfig.bg }]}
+              onPress={() => setShowCounterModal(true)}
+              activeOpacity={0.8}
+            >
               <View style={[styles.statusDot, { backgroundColor: statusConfig.dot }]} />
               <Text
                 style={[styles.statusPillText, { color: statusConfig.text }]}
@@ -129,7 +182,7 @@ export default function StaffQueueDesk() {
                 {counterWindow} • {statusConfig.label}
               </Text>
               <Ionicons name="chevron-down" size={14} color={statusConfig.text} />
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -216,6 +269,34 @@ export default function StaffQueueDesk() {
                   <Text style={styles.notesText}>{servingTicket.notes}</Text>
                 </View>
               ) : null}
+
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={styles.recallButton}
+                  onPress={() => setShowRecallModal(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="volume-high-outline" size={18} color={Colors.ink} />
+                  <Text style={styles.recallButtonText}>Recall</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.completeButton}
+                  onPress={() => setShowCompleteModal(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="checkmark" size={18} color={Colors.ink} />
+                  <Text style={styles.completeButtonText}>Complete</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={styles.skipButton}
+                onPress={() => setShowSkipModal(true)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="close-circle-outline" size={17} color="#FCA5A5" />
+                <Text style={styles.skipButtonText}>Skip ticket</Text>
+              </TouchableOpacity>
             </>
           ) : (
             <View style={styles.emptyServing}>
@@ -286,7 +367,12 @@ export default function StaffQueueDesk() {
           </ScrollView>
 
           {filteredQueue.map((ticket, index) => (
-            <View key={ticket.id} style={styles.queueCard}>
+            <TouchableOpacity
+              key={ticket.id}
+              style={styles.queueCard}
+              onPress={() => setInspectedTicket(ticket)}
+              activeOpacity={0.85}
+            >
               <View style={styles.queuePosition}>
                 <Text style={styles.queuePositionText}>{index + 1}</Text>
               </View>
@@ -301,7 +387,7 @@ export default function StaffQueueDesk() {
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={18} color={Colors.inkTabInactive} />
-            </View>
+            </TouchableOpacity>
           ))}
 
           {filteredQueue.length === 0 && (
@@ -312,6 +398,185 @@ export default function StaffQueueDesk() {
           )}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={showCounterModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowCounterModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Counter settings</Text>
+            <Text style={styles.modalLabel}>Window</Text>
+            {['Window 1', 'Window 2', 'Window 3'].map((window) => (
+              <TouchableOpacity
+                key={window}
+                style={[styles.optionRow, counterWindow === window && styles.optionRowActive]}
+                onPress={() => setCounterWindow(window)}
+              >
+                <Text style={styles.optionText}>{window}</Text>
+                {counterWindow === window && (
+                  <Ionicons name="checkmark-circle" size={20} color={Colors.successText} />
+                )}
+              </TouchableOpacity>
+            ))}
+            <Text style={styles.modalLabel}>Desk status</Text>
+            {(['online', 'break', 'closed'] as DeskStatus[]).map((status) => (
+              <TouchableOpacity
+                key={status}
+                style={[styles.optionRow, deskStatus === status && styles.optionRowActive]}
+                onPress={() => setDeskStatus(status)}
+              >
+                <Text style={styles.optionText}>{status[0].toUpperCase() + status.slice(1)}</Text>
+                {deskStatus === status && (
+                  <Ionicons name="checkmark-circle" size={20} color={Colors.successText} />
+                )}
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={styles.modalPrimary}
+              onPress={() => setShowCounterModal(false)}
+            >
+              <Text style={styles.modalPrimaryText}>Save settings</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showCompleteModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowCompleteModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconSuccess}>
+              <Ionicons name="checkmark" size={26} color={Colors.ink} />
+            </View>
+            <Text style={styles.modalTitle}>Complete ticket?</Text>
+            <Text style={styles.modalBody}>
+              Mark {servingTicket?.ticketNumber} as completed and record optional remarks.
+            </Text>
+            <TextInput
+              value={staffRemarks}
+              onChangeText={setStaffRemarks}
+              placeholder="Staff remarks (optional)"
+              placeholderTextColor={Colors.inkTabInactive}
+              style={styles.modalInput}
+              multiline
+            />
+            <TouchableOpacity
+              style={styles.modalPrimary}
+              onPress={() => handleCompleteCurrent(true)}
+            >
+              <Text style={styles.modalPrimaryText}>Complete and call next</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondary}
+              onPress={() => handleCompleteCurrent(false)}
+            >
+              <Text style={styles.modalSecondaryText}>Complete without calling next</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showRecallModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowRecallModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Ionicons name="volume-high" size={34} color={Colors.registrar} />
+            <Text style={styles.modalTitle}>Send recall alert?</Text>
+            <Text style={styles.modalBody}>
+              Notify the student that {servingTicket?.ticketNumber} is now being served.
+            </Text>
+            <TouchableOpacity style={styles.modalPrimary} onPress={handleSendRecall}>
+              <Text style={styles.modalPrimaryText}>Send recall</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondary}
+              onPress={() => setShowRecallModal(false)}
+            >
+              <Text style={styles.modalSecondaryText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showSkipModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowSkipModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Ionicons name="close-circle" size={34} color={Colors.danger} />
+            <Text style={styles.modalTitle}>Skip this ticket?</Text>
+            <Text style={styles.modalBody}>
+              Choose a reason for skipping {servingTicket?.ticketNumber}.
+            </Text>
+            <TextInput
+              value={skipReason}
+              onChangeText={setSkipReason}
+              style={styles.modalInput}
+              multiline
+            />
+            <TouchableOpacity
+              style={[styles.modalPrimary, styles.dangerPrimary]}
+              onPress={handleSkipCurrent}
+            >
+              <Text style={styles.dangerPrimaryText}>Confirm skip</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondary}
+              onPress={() => setShowSkipModal(false)}
+            >
+              <Text style={styles.modalSecondaryText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={!!inspectedTicket}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setInspectedTicket(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          {inspectedTicket && (
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>{inspectedTicket.ticketNumber}</Text>
+              <Text style={styles.modalBody}>{inspectedTicket.studentName}</Text>
+              <Text style={styles.detailText}>USN: {inspectedTicket.usn}</Text>
+              <Text style={styles.detailText}>Program: {inspectedTicket.program}</Text>
+              <Text style={styles.detailText}>Service: {inspectedTicket.serviceType}</Text>
+              <Text style={styles.detailText}>Wait time: {inspectedTicket.waitMinutes} minutes</Text>
+              {inspectedTicket.notes ? (
+                <Text style={styles.detailText}>Notes: {inspectedTicket.notes}</Text>
+              ) : null}
+              <TouchableOpacity
+                style={styles.modalPrimary}
+                onPress={() => setInspectedTicket(null)}
+              >
+                <Text style={styles.modalPrimaryText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -446,8 +711,12 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     backgroundColor: Colors.canvas,
   },
-  notchLeft: { left: -9 },
-  notchRight: { right: -9 },
+  notchLeft: {
+    left: -9,
+  },
+  notchRight: {
+    right: -9,
+  },
   cardTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -491,7 +760,9 @@ const styles = StyleSheet.create({
     lineHeight: 50,
     letterSpacing: -1.3,
   },
-  timerContainer: { alignItems: 'flex-end' },
+  timerContainer: {
+    alignItems: 'flex-end',
+  },
   timerValue: {
     color: Colors.matcha,
     fontFamily: Fonts.monoBold,
@@ -507,9 +778,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  verifiedBg: { backgroundColor: Colors.matchaSoftBg },
-  unverifiedBg: { backgroundColor: Colors.warningSoftBg },
-  verificationText: { flex: 1, fontFamily: Fonts.bodyBold, fontSize: 12.5 },
+  verifiedBg: {
+    backgroundColor: Colors.matchaSoftBg,
+  },
+  unverifiedBg: {
+    backgroundColor: Colors.warningSoftBg,
+  },
+  verificationText: {
+    flex: 1,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+  },
   recallBadge: {
     backgroundColor: Colors.ink,
     borderRadius: Radii.pill,
@@ -527,7 +806,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.darkDivider,
     marginVertical: 18,
   },
-  studentInfoRow: { flexDirection: 'row', alignItems: 'center' },
+  studentInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   avatarCircle: {
     width: 48,
     height: 48,
@@ -536,16 +818,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { color: Colors.matcha, fontFamily: Fonts.displayExtraBold, fontSize: 15 },
-  studentInfo: { flex: 1, marginLeft: 12 },
-  studentName: { color: Colors.surface, fontFamily: Fonts.displayBold, fontSize: 17 },
+  avatarText: {
+    color: Colors.matcha,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 15,
+  },
+  studentInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  studentName: {
+    color: Colors.surface,
+    fontFamily: Fonts.displayBold,
+    fontSize: 17,
+  },
   studentMeta: {
     color: Colors.inkTabInactive,
     fontFamily: Fonts.bodyRegular,
     marginTop: 3,
     fontSize: 12,
   },
-  serviceName: { color: Colors.surface, fontFamily: Fonts.bodyBold, marginTop: 6, fontSize: 13 },
+  serviceName: {
+    color: Colors.surface,
+    fontFamily: Fonts.bodyBold,
+    marginTop: 6,
+    fontSize: 13,
+  },
   notesBox: {
     marginTop: 14,
     borderRadius: Radii.md,
@@ -555,15 +853,75 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 12,
   },
-  notesText: { flex: 1, color: '#D4D4D8', fontFamily: Fonts.bodyRegular, fontSize: 12 },
-  emptyServing: { alignItems: 'center', paddingVertical: 30 },
+  notesText: {
+    flex: 1,
+    color: '#D4D4D8',
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 12,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  recallButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  recallButtonText: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 13.5,
+  },
+  completeButton: {
+    flex: 1.35,
+    height: 46,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.matcha,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  completeButtonText: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 13.5,
+  },
+  skipButton: {
+    height: 38,
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  skipButtonText: {
+    color: Colors.dangerOutlineStrong,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 13,
+  },
+  emptyServing: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
   emptyServingTitle: {
     color: Colors.surface,
     fontFamily: Fonts.displayExtraBold,
     fontSize: 22,
     marginTop: 10,
   },
-  emptyServingText: { color: Colors.inkTabInactive, fontFamily: Fonts.bodyRegular, marginTop: 5 },
+  emptyServingText: {
+    color: Colors.inkTabInactive,
+    fontFamily: Fonts.bodyRegular,
+    marginTop: 5,
+  },
   callNextButton: {
     height: 46,
     borderRadius: Radii.pill,
@@ -574,8 +932,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  callNextText: { color: Colors.ink, fontFamily: Fonts.displayExtraBold },
-  queueSection: { marginTop: 22 },
+  callNextText: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+  },
+  queueSection: {
+    marginTop: 22,
+  },
   queueHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -602,7 +965,11 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingHorizontal: 14,
   },
-  nextButtonText: { color: Colors.ink, fontFamily: Fonts.displayExtraBold, fontSize: 13 },
+  nextButtonText: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 13,
+  },
   searchBox: {
     height: 48,
     marginTop: 14,
@@ -621,7 +988,10 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyMedium,
     fontSize: 13,
   },
-  serviceFilterRow: { gap: 8, paddingVertical: 12 },
+  serviceFilterRow: {
+    gap: 8,
+    paddingVertical: 12,
+  },
   filterChip: {
     height: 36,
     borderRadius: Radii.pill,
@@ -632,9 +1002,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  filterChipActive: { backgroundColor: Colors.ink, borderColor: Colors.ink },
-  filterChipText: { color: Colors.ink, fontFamily: Fonts.bodyBold, fontSize: 12 },
-  filterChipTextActive: { color: Colors.surface },
+  filterChipActive: {
+    backgroundColor: Colors.ink,
+    borderColor: Colors.ink,
+  },
+  filterChipText: {
+    color: Colors.ink,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12,
+  },
+  filterChipTextActive: {
+    color: Colors.surface,
+  },
   queueCard: {
     minHeight: 104,
     marginBottom: 10,
@@ -659,7 +1038,10 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.monoBold,
     fontVariant: ['tabular-nums'],
   },
-  queueCardInfo: { flex: 1, marginHorizontal: 12 },
+  queueCardInfo: {
+    flex: 1,
+    marginHorizontal: 12,
+  },
   queueCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -691,7 +1073,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  serviceChipText: { color: Colors.registrar, fontFamily: Fonts.bodyBold, fontSize: 11 },
+  serviceChipText: {
+    color: Colors.registrar,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 11,
+  },
   emptyQueue: {
     height: 120,
     borderRadius: Radii.card,
@@ -701,5 +1087,117 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyQueueText: { color: Colors.inkSoft, fontFamily: Fonts.bodyMedium, marginTop: 8 },
+  emptyQueueText: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyMedium,
+    marginTop: 8,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: Colors.backdrop,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 430,
+    borderRadius: Radii.modal,
+    backgroundColor: Colors.surface,
+    padding: 20,
+  },
+  modalIconSuccess: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: Colors.matcha,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 22,
+    letterSpacing: -0.5,
+  },
+  modalBody: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyRegular,
+    marginTop: 8,
+    marginBottom: 14,
+    lineHeight: 19,
+  },
+  modalLabel: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyBold,
+    marginTop: 12,
+    marginBottom: 6,
+    fontSize: 12,
+  },
+  optionRow: {
+    height: 44,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  optionRowActive: {
+    backgroundColor: Colors.matchaSoftBg,
+    borderColor: Colors.successText,
+  },
+  optionText: {
+    color: Colors.ink,
+    fontFamily: Fonts.bodyBold,
+  },
+  modalInput: {
+    minHeight: 52,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSubtle,
+    color: Colors.ink,
+    fontFamily: Fonts.bodyMedium,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  modalPrimary: {
+    height: 48,
+    marginTop: 14,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.matcha,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dangerPrimary: {
+    backgroundColor: Colors.danger,
+  },
+  modalPrimaryText: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 14,
+  },
+  dangerPrimaryText: {
+    color: Colors.surface,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 14,
+  },
+  modalSecondary: {
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSecondaryText: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyBold,
+  },
+  detailText: {
+    color: Colors.ink,
+    fontFamily: Fonts.bodyMedium,
+    marginTop: 6,
+  },
 });
