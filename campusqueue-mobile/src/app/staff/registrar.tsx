@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -21,13 +22,32 @@ export default function StaffQueueDesk() {
   const { showToast, triggerHaptic, bumpLoginReset } = useQueue();
   const {
     activeStaff,
+    deskConfig,
     counterWindow,
     deskStatus,
     servingTicket,
+    waitingQueue,
     elapsedSeconds,
     recallCount,
     callNext,
   } = useStaffQueue();
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedService, setSelectedService] = useState('All Services');
+
+  const filteredQueue = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return waitingQueue.filter((ticket) => {
+      const matchesService =
+        selectedService === 'All Services' || ticket.serviceType === selectedService;
+      const matchesQuery =
+        !query ||
+        ticket.ticketNumber.toLowerCase().includes(query) ||
+        ticket.usn.includes(query) ||
+        ticket.studentName.toLowerCase().includes(query);
+      return matchesService && matchesQuery;
+    });
+  }, [waitingQueue, selectedService, searchQuery]);
 
   const formatTimer = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
@@ -210,6 +230,84 @@ export default function StaffQueueDesk() {
                 <Text style={styles.callNextText}>Call next</Text>
                 <Ionicons name="arrow-forward" size={18} color={Colors.ink} />
               </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.queueSection}>
+          <View style={styles.queueHeader}>
+            <View>
+              <Text style={styles.sectionEyebrow}>LIVE QUEUE</Text>
+              <Text style={styles.sectionTitle}>{waitingQueue.length} waiting</Text>
+            </View>
+            {servingTicket && waitingQueue.length > 0 ? (
+              <TouchableOpacity
+                style={styles.nextButton}
+                onPress={handleCallNext}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="arrow-forward" size={16} color={Colors.ink} />
+                <Text style={styles.nextButtonText}>Next</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={18} color={Colors.inkSoft} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search ticket, name, or USN"
+              placeholderTextColor={Colors.inkTabInactive}
+              style={styles.searchInput}
+            />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.serviceFilterRow}
+          >
+            {deskConfig.services.map((service) => {
+              const active = selectedService === service;
+              return (
+                <TouchableOpacity
+                  key={service}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  onPress={() => setSelectedService(service)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                    {service}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {filteredQueue.map((ticket, index) => (
+            <View key={ticket.id} style={styles.queueCard}>
+              <View style={styles.queuePosition}>
+                <Text style={styles.queuePositionText}>{index + 1}</Text>
+              </View>
+              <View style={styles.queueCardInfo}>
+                <View style={styles.queueCardTop}>
+                  <Text style={styles.queueTicketNumber}>{ticket.ticketNumber}</Text>
+                  <Text style={styles.waitTime}>{ticket.waitMinutes} mins</Text>
+                </View>
+                <Text style={styles.queueStudentName}>{ticket.studentName}</Text>
+                <View style={styles.serviceChip}>
+                  <Text style={styles.serviceChipText}>{ticket.serviceType}</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.inkTabInactive} />
+            </View>
+          ))}
+
+          {filteredQueue.length === 0 && (
+            <View style={styles.emptyQueue}>
+              <Ionicons name="file-tray-outline" size={30} color="#A3A3A3" />
+              <Text style={styles.emptyQueueText}>No tickets match this filter</Text>
             </View>
           )}
         </View>
@@ -477,4 +575,131 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   callNextText: { color: Colors.ink, fontFamily: Fonts.displayExtraBold },
+  queueSection: { marginTop: 22 },
+  queueHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sectionEyebrow: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.monoSemiBold,
+    fontSize: 11,
+    fontVariant: ['tabular-nums'],
+  },
+  sectionTitle: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 24,
+    letterSpacing: -0.6,
+  },
+  nextButton: {
+    height: 38,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.matcha,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
+  },
+  nextButtonText: { color: Colors.ink, fontFamily: Fonts.displayExtraBold, fontSize: 13 },
+  searchBox: {
+    height: 48,
+    marginTop: 14,
+    borderRadius: Radii.lg,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    color: Colors.ink,
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13,
+  },
+  serviceFilterRow: { gap: 8, paddingVertical: 12 },
+  filterChip: {
+    height: 36,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterChipActive: { backgroundColor: Colors.ink, borderColor: Colors.ink },
+  filterChipText: { color: Colors.ink, fontFamily: Fonts.bodyBold, fontSize: 12 },
+  filterChipTextActive: { color: Colors.surface },
+  queueCard: {
+    minHeight: 104,
+    marginBottom: 10,
+    borderRadius: Radii.card,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+  },
+  queuePosition: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  queuePositionText: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.monoBold,
+    fontVariant: ['tabular-nums'],
+  },
+  queueCardInfo: { flex: 1, marginHorizontal: 12 },
+  queueCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  queueTicketNumber: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 20,
+    letterSpacing: -0.5,
+  },
+  waitTime: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 11.5,
+    fontVariant: ['tabular-nums'],
+  },
+  queueStudentName: {
+    color: Colors.ink,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 14,
+    marginTop: 2,
+  },
+  serviceChip: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.registrarPillBg,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  serviceChipText: { color: Colors.registrar, fontFamily: Fonts.bodyBold, fontSize: 11 },
+  emptyQueue: {
+    height: 120,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyQueueText: { color: Colors.inkSoft, fontFamily: Fonts.bodyMedium, marginTop: 8 },
 });
