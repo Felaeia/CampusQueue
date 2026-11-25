@@ -1,27 +1,42 @@
-import { readFile } from "node:fs/promises";
-import { adminDb } from "../lib/firebaseAdmin.ts";
-import { desks } from "../lib/queue.ts";
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import { applyMigrations } from "./schema.ts";
 
-const db = adminDb();
-const offices = JSON.parse(await readFile(new URL("./001-offices.json", import.meta.url), "utf8"));
-const marker = db.collection("schemaMigrations").doc("001-offices");
+const [mode = "--dry-run", target, ...extra] = process.argv.slice(2);
+if (!["--dry-run", "--apply", "--interactive"].includes(mode) || extra.length ||
+    (mode !== "--apply" && target !== undefined)) {
+  throw new Error("Use --dry-run, --apply <project-id>, or --interactive");
+}
 
-const applied = await db.runTransaction(async (transaction) => {
-  const refs = offices.map((item: { id: string }) => db.collection("offices").doc(item.id));
-  const counters = desks.map((name) => db.collection("offices").doc("registrar").collection("counters").doc(name));
-  const [migration, ...documents] = await transaction.getAll(marker, ...refs, ...counters);
-  if (migration.exists) return false;
-  for (let index = 0; index < documents.length; index++) {
-    const document = documents[index];
-    if (document.exists) continue;
-    if (index < offices.length) {
-      const { id, ...data } = offices[index];
-      transaction.create(document.ref, data);
-    } else {
-      transaction.create(document.ref, { status: "online", ticketId: null });
-    }
+const projectId = process.env.FIREBASE_PROJECT_ID;
+if (!projectId) throw new Error("Set FIREBASE_PROJECT_ID in campusqueue-api/.env");
+const production = projectId === process.env.FIREBASE_PRODUCTION_PROJECT_ID;
+
+if (mode === "--interactive") {
+  if (process.env.VERCEL_ENV || !stdin.isTTY) {
+    throw new Error("Run the interactive migration from a local terminal");
   }
-  transaction.create(marker, { appliedAt: new Date().toISOString() });
-  return true;
-});
-console.log(applied ? "Office and counter migration applied." : "Office and counter migration already applied.");
+  console.log(`Firebase project: ${projectId}${production ? " (production)" : ""}`);
+  console.log(JSON.stringify({ mode: "--dry-run", ...await applyMigrations(true) }, null, 2));
+  const prompt = createInterface({ input: stdin, output: stdout });
+  let confirmation: string;
+  try {
+    confirmation = await prompt.question("Type the exact Firebase project ID to apply, or press Enter to cancel: ");
+  } finally {
+    prompt.close();
+  }
+  if (confirmation === projectId) {
+    console.log(JSON.stringify({ mode: "--apply", ...await applyMigrations(false) }, null, 2));
+  } else {
+    console.log("Migration cancelled. No changes were written.");
+    if (confirmation !== "") process.exitCode = 1;
+  }
+} else {
+  if (mode === "--apply" && target !== projectId) {
+    throw new Error("Supply the exact configured project ID after --apply");
+  }
+  if (mode === "--apply" && (process.env.VERCEL_ENV === "production" || production)) {
+    throw new Error("For production, run migrate-firestore.bat or use --interactive from a local terminal");
+  }
+  console.log(JSON.stringify({ mode, ...await applyMigrations(mode === "--dry-run") }, null, 2));
+}

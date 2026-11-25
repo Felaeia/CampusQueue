@@ -21,6 +21,6 @@ const accounts = [...staff, {
   role: "student", password: authDefaults.defaultPassword,
 }];
 for (const account of accounts) {
-  const changed = await provision(account, { demo: true, reset: false });
+  const { changed } = await provision(account, { demo: true, reset: false });
   console.log(`${account.loginId}: ${changed ? "provisioned" : "already provisioned"}`);
 }

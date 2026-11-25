@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { FieldValue } from "firebase-admin/firestore";
+import { audit } from "./audit.ts";
 import { adminDb } from "./firebaseAdmin.ts";
-import { ApiError, key, text } from "./http.ts";
+import { ApiError, key, requireCurrent, text, type Actor } from "./http.ts";
 
 export const officeIds = ["registrar", "accounting", "sao"];
 export const desks = ["Window 1", "Window 2", "Window 3"];
@@ -8,7 +10,7 @@ export const now = () => new Date().toISOString();
 
 export function officeKey(value: unknown): string {
   const id = key(value, "officeId");
-  if (!officeIds.includes(id)) throw new ApiError(404, "Office not found");
+  if (id.startsWith("__")) throw new ApiError(400, "Invalid officeId");
   return id;
 }
 
@@ -25,9 +27,45 @@ export function notification(uid: string, title: string, message: string, ticket
   };
 }
 
-export async function issueTicket(uid: string, input: Record<string, unknown>) {
+export function nearTurnThreshold(config: FirebaseFirestore.DocumentData): number | null {
+  return Number.isInteger(config.nearTurnThreshold) && config.nearTurnThreshold >= 0 && config.nearTurnThreshold <= 20
+    ? config.nearTurnThreshold : null;
+}
+
+export function writeNearTurn(tx: FirebaseFirestore.Transaction, uid: string, id: string, officeName: string) {
+  const alert = notification(uid, "Nearly your turn", `Your ticket for ${officeName} is near the front of the queue.`, id);
+  tx.create(alert.ref, { ...alert.data, kind: "near_turn" });
+}
+
+export async function prepareNearTurn(
+  tx: FirebaseFirestore.Transaction,
+  officeId: string,
+  config: FirebaseFirestore.DocumentData,
+  excluded?: string,
+): Promise<() => void> {
+  const threshold = nearTurnThreshold(config);
+  if (threshold === null) return () => {};
+  const queue = await tx.get(waiting(officeId).orderBy("sequence").limit(threshold + (excluded ? 2 : 1)));
+  const entering = queue.docs.filter((doc) => doc.id !== excluded).slice(0, threshold + 1)
+    .filter((doc) => !doc.get("nearTurnNotified"));
+  if (!entering.length) return () => {};
+  const tickets = await tx.getAll(...entering.map((doc) => ticketRef(doc.id)));
+  const eligible = tickets.filter((doc) => doc.get("status") === "waiting" && doc.get("officeId") === officeId);
+  return () => {
+    for (const ticket of eligible) {
+      tx.update(waiting(officeId).doc(ticket.id), { nearTurnNotified: true });
+      if (ticket.get("nearTurnNotified")) continue;
+      tx.update(ticket.ref, { nearTurnNotified: true });
+      writeNearTurn(tx, ticket.get("uid"), ticket.id, config.name);
+    }
+  };
+}
+
+export async function issueTicket(actor: Actor, input: Record<string, unknown>) {
+  const { uid } = actor;
   const id = officeKey(input.officeId);
-  const service = text(input.serviceName, "serviceName");
+  const serviceId = input.serviceId == null ? null : key(input.serviceId, "serviceId");
+  const service = serviceId ? null : text(input.serviceName, "serviceName");
   const notes = input.notes == null || input.notes === "" ? "" : text(input.notes, "notes", 500);
   const operationId = key(input.requestId, "requestId");
   const profile = userRef(uid);
@@ -37,48 +75,58 @@ export async function issueTicket(uid: string, input: Record<string, unknown>) {
   const token = randomBytes(24).toString("base64url");
 
   return adminDb().runTransaction(async (tx) => {
-    const [accountSnap, officeSnap, receiptSnap] = await tx.getAll(profile, office, receipt);
+    const account = await requireCurrent(tx, actor);
+    const [officeSnap, receiptSnap] = await tx.getAll(office, receipt);
     if (receiptSnap.exists) {
       const previous = receiptSnap.data()!;
-      if (previous.officeId !== id || previous.service !== service || previous.notes !== notes) {
+      if (previous.officeId !== id || (serviceId ? previous.serviceId !== serviceId : previous.service !== service) || previous.notes !== notes) {
         throw new ApiError(409, "Request ID already used");
       }
       const existing = await tx.get(ticketRef(previous.ticketId));
       if (!existing.exists) throw new ApiError(409, "Original ticket is unavailable");
       return { id: existing.id, ...existing.data() };
     }
-    const account = accountSnap.data()!;
     const config = officeSnap.data();
-    if (!config) throw new ApiError(404, "Office not found");
+    if (!config || config.archivedAt) throw new ApiError(404, "Office not found");
+    if (config.acceptingTickets === false) throw new ApiError(409, "Office is not accepting tickets");
     if (account.activeTickets?.[id]) throw new ApiError(409, "You already have an active ticket for this office");
-    const chosen = config.services?.find((item: { name: string }) => item.name === service);
-    if (!chosen) throw new ApiError(400, "Service is unavailable");
+    const chosen = config.services?.find((item: { id: string; name: string }) => serviceId ? item.id === serviceId : item.name === service);
+    if (!chosen || chosen.archivedAt || chosen.available === false) throw new ApiError(400, "Service is unavailable");
     const sequence = (config.lastIssuedNumber ?? 0) + 1;
+    const queueSequence = Math.max(config.lastQueueSequence ?? 0, config.lastIssuedNumber ?? 0) + 1;
+    const threshold = nearTurnThreshold(config);
+    const nearTurnNotified = threshold !== null && (config.waitingCount ?? 0) <= threshold;
     const ticketNumber = `${config.prefix}-${String(sequence).padStart(3, "0")}`;
     const issuedAt = now();
     const data = {
-      uid, sequence, ticketNumber, officeId: id, officeName: config.name,
+      uid, sequence, queueSequence, originalQueueSequence: queueSequence, ticketNumber, officeId: id, officeName: config.name,
       shortOffice: config.shortLabel, counter: config.windowLabel,
-      status: "waiting", service, holderShort: account.holderShort ?? account.fullName,
+      status: "waiting", service: chosen.name, serviceId: chosen.id, officeCode: config.prefix,
+      serviceSnapshot: { name: chosen.name, duration: chosen.duration, docs: chosen.docs ?? "", description: chosen.description ?? "" },
+      holderShort: account.holderShort ?? account.fullName,
       studentName: account.fullName, studentUsn: account.usn, program: account.program ?? "",
       serial: ticket.id, qrPayload: `cq:v1:${ticket.id}:${token}`, issuedAt,
       estWaitMins: ((config.waitingCount ?? 0) + 1) * chosen.duration,
       aheadCount: config.waitingCount ?? 0, nowServing: config.nowServing ?? "",
-      trackNodes: [], notes, isQrVerified: false, recallCount: 0,
+      trackNodes: [], notes, isQrVerified: false, recallCount: 0, nearTurnNotified, requeueCount: 0,
     };
-    tx.create(ticket, data);
-    tx.create(waiting(id).doc(ticket.id), { sequence });
-    tx.create(receipt, { officeId: id, service, notes, ticketId: ticket.id });
+    tx.create(ticket, { ...data, issuedTimestamp: FieldValue.serverTimestamp() });
+    audit(tx, actor, "ticket_issued", "ticket", ticket.id, { officeId: id, ticketId: ticket.id });
+    tx.create(waiting(id).doc(ticket.id), { sequence: queueSequence, nearTurnNotified });
+    if (nearTurnNotified) writeNearTurn(tx, uid, ticket.id, config.name);
+    tx.create(receipt, { officeId: id, service: chosen.name, serviceId: chosen.id, notes, ticketId: ticket.id });
     tx.update(profile, `activeTickets.${id}`, ticket.id);
-    tx.update(office, { lastIssuedNumber: sequence, waitingCount: data.aheadCount + 1 });
+    tx.update(office, { lastIssuedNumber: sequence, lastQueueSequence: queueSequence, waitingCount: data.aheadCount + 1 });
     return { id: ticket.id, ...data };
   });
 }
 
-export async function cancelTicket(uid: string, input: Record<string, unknown>) {
+export async function cancelTicket(actor: Actor, input: Record<string, unknown>) {
+  const { uid } = actor;
   const id = key(input.ticketId, "ticketId");
   const reason = text(input.reason, "reason", 500);
   return adminDb().runTransaction(async (tx) => {
+    await requireCurrent(tx, actor);
     const ticket = ticketRef(id);
     const data = (await tx.get(ticket)).data();
     if (!data || data.uid !== uid) throw new ApiError(404, "Ticket not found");
@@ -86,13 +134,32 @@ export async function cancelTicket(uid: string, input: Record<string, unknown>) 
     if (data.status !== "waiting") throw new ApiError(409, "Only waiting tickets can be cancelled");
     const office = officeRef(data.officeId);
     const config = (await tx.get(office)).data()!;
+    const notify = await prepareNearTurn(tx, data.officeId, config, id);
     const timestamp = now();
-    tx.update(ticket, { status: "Cancelled", reason, timestamp });
+    tx.update(ticket, { status: "Cancelled", reason, timestamp, closedTimestamp: FieldValue.serverTimestamp() });
+    audit(tx, actor, "ticket_cancelled", "ticket", id, { officeId: data.officeId, ticketId: id });
     tx.delete(waiting(data.officeId).doc(id));
     tx.create(history(uid).doc(id), { timestamp });
     tx.update(userRef(uid), `activeTickets.${data.officeId}`, null);
     tx.update(office, { waitingCount: Math.max(0, config.waitingCount - 1) });
+    notify();
     return { id, status: "Cancelled" };
+  });
+}
+
+export async function acknowledgeTicket(actor: Actor, input: Record<string, unknown>) {
+  const id = key(input.ticketId, "ticketId");
+  return adminDb().runTransaction(async (tx) => {
+    await requireCurrent(tx, actor);
+    const ref = ticketRef(id);
+    const ticket = (await tx.get(ref)).data();
+    if (!ticket || ticket.uid !== actor.uid) throw new ApiError(404, "Ticket not found");
+    if (!["called", "serving"].includes(ticket.status)) throw new ApiError(409, "Ticket has not been called or is closed");
+    if (ticket.acknowledgedAt) return { ticketId: id, acknowledgedAt: ticket.acknowledgedAt };
+    const acknowledgedAt = now();
+    tx.update(ref, { acknowledgedAt, acknowledgmentTimestamp: FieldValue.serverTimestamp() });
+    audit(tx, actor, "student_acknowledged", "ticket", id, { officeId: ticket.officeId, ticketId: id });
+    return { ticketId: id, acknowledgedAt };
   });
 }
 

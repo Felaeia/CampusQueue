@@ -108,7 +108,7 @@ Expect HTTP `200` and this response:
 ### Verify Firebase Authentication and Firestore
 
 1. Set `FIREBASE_WEB_API_KEY` in the API environment using the Web API Key from Firebase **Project settings → General**. CampusQueue uses Firebase custom tokens and signs users in by USN or staff ID and password.
-2. From `campusqueue-api`, run `npm run migrate`. Follow the [backend setup guide](campusqueue-api/README.md) to provision an account or seed the development demo accounts.
+2. From `campusqueue-api`, run `.migrate-firestore.bat` on Windows or `npm run migrate -- --interactive` on any platform. Review the dry run and confirm the displayed Firebase project ID. Follow the [backend setup guide](campusqueue-api/README.md) to provision an account or seed the development demo accounts.
 3. Send a JSON `POST` request to `http://localhost:3000/api/auth` with the sign-in ID and its password.
 
    ```json

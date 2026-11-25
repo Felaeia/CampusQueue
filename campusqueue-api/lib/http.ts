@@ -19,13 +19,35 @@ export function text(value: unknown, field: string, max = 160): string {
 
 export function key(value: unknown, field: string): string {
   const result = text(value, field, 100);
-  if (!/^[a-zA-Z0-9_-]+$/.test(result)) throw new ApiError(400, `Invalid ${field}`);
+  if (!/^[a-zA-Z0-9_-]+$/.test(result) || result.startsWith("__")) throw new ApiError(400, `Invalid ${field}`);
   return result;
 }
 
+export async function readBody(request: Request, limit: number) {
+  if (Number(request.headers.get("content-length")) > limit) throw new ApiError(413, "Request body too large");
+  const reader = request.body?.getReader();
+  if (!reader) return "";
+  const buffers: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > limit) {
+        await reader.cancel();
+        throw new ApiError(413, "Request body too large");
+      }
+      buffers.push(part.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(buffers).toString("utf8");
+}
+
 export async function body(request: Request): Promise<Record<string, unknown>> {
-  const raw = await request.text();
-  if (raw.length > 8192) throw new ApiError(413, "Request body too large");
+  const raw = await readBody(request, 8192);
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -37,26 +59,45 @@ export async function body(request: Request): Promise<Record<string, unknown>> {
   throw new ApiError(400, "Expected a JSON object");
 }
 
-export async function actor(request: Request, role?: "student" | "registrar_staff") {
+export type Role = "student" | "staff" | "admin";
+export function roleOf(profile: FirebaseFirestore.DocumentData): Role | undefined {
+  const role = profile.role === "registrar_staff" ? "staff" : profile.role;
+  return role === "student" || role === "staff" || role === "admin" ? role : undefined;
+}
+
+export function activeAccount(profile: FirebaseFirestore.DocumentData): boolean {
+  return !profile.disabled && profile.accountStatus !== "archived" && demoLoginAllowed(profile);
+}
+
+export type Actor = { uid: string; role: Role; profile: FirebaseFirestore.DocumentData; version: number };
+
+export async function requireCurrent(tx: FirebaseFirestore.Transaction, actor: Actor) {
+  const profile = (await tx.get(adminDb().collection("users").doc(actor.uid))).data();
+  if (!profile || !activeAccount(profile) || roleOf(profile) !== actor.role ||
+      profile.credentialVersion !== actor.version) throw new ApiError(403, "Account access changed");
+  return profile;
+}
+
+export async function actor(request: Request, role?: Role): Promise<Actor> {
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) throw new ApiError(401, "Authentication required");
   return verifiedAccount(header.slice(7).trim(), role);
 }
 
-export async function verifiedAccount(idToken: string, role?: "student" | "registrar_staff") {
+export async function verifiedAccount(idToken: string, role?: Role): Promise<Actor> {
   const auth = adminAuth();
   const token = await auth.verifyIdToken(idToken, true).catch(() => {
     throw new ApiError(401, "Invalid or expired token");
   });
   const profile = (await adminDb().collection("users").doc(token.uid).get()).data();
-  if (!profile || !["student", "registrar_staff"].includes(profile.role) ||
-      (role && profile.role !== role) || profile.disabled === true || !demoLoginAllowed(profile)) {
+  const effective = profile ? roleOf(profile) : undefined;
+  if (!profile || !effective || (role && effective !== role) || !activeAccount(profile)) {
     throw new ApiError(403, "Account is not authorized");
   }
   if (!Number.isInteger(profile.credentialVersion) || token.cqVersion !== profile.credentialVersion) {
     throw new ApiError(401, "Session expired. Sign in again.");
   }
-  return { uid: token.uid, profile };
+  return { uid: token.uid, role: effective, profile, version: profile.credentialVersion };
 }
 
 export function endpoint(
@@ -79,12 +120,18 @@ export function endpoint(
         return Response.json({ error: "Method not allowed" }, { status: 405, headers });
       }
       try {
-        return Response.json(await handler(request), { headers });
+        const result = await handler(request);
+        if (result instanceof Response) {
+          for (const [key, value] of headers.entries()) result.headers.set(key, value);
+          return result;
+        }
+        return Response.json(result, { headers });
       } catch (error) {
         if (error instanceof ApiError) {
           return Response.json({ error: error.message }, { status: error.status, headers });
         }
-        console.error("CampusQueue request failed", error);
+        const code = (error as { code?: unknown } | null)?.code;
+        console.error("CampusQueue request failed", typeof code === "number" ? code : "internal");
         return Response.json({ error: "Request could not be completed" }, { status: 500, headers });
       }
     },

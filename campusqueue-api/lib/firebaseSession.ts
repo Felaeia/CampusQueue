@@ -1,8 +1,8 @@
-import { adminAuth } from "./firebaseAdmin.ts";
+import { adminAuth, authApiUrl } from "./firebaseAdmin.ts";
 import { ApiError } from "./http.ts";
 
 export function firebaseWebKey(): string {
-  const key = process.env.FIREBASE_WEB_API_KEY;
+  const key = process.env.FIREBASE_WEB_API_KEY ?? (process.env.FIREBASE_AUTH_EMULATOR_HOST ? "demo-key" : undefined);
   if (!key) throw new ApiError(503, "Firebase sign-in is not configured");
   return encodeURIComponent(key);
 }
@@ -10,7 +10,7 @@ export function firebaseWebKey(): string {
 export async function newSession(uid: string, credentialVersion: number) {
   const key = firebaseWebKey();
   const token = await adminAuth().createCustomToken(uid, { cqVersion: credentialVersion });
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${key}`, {
+  const response = await fetch(`${authApiUrl("identitytoolkit", "accounts:signInWithCustomToken")}?key=${key}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, returnSecureToken: true }),

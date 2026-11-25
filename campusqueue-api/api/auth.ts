@@ -1,7 +1,8 @@
+import { audit } from "../lib/audit.ts";
 import { adminDb } from "../lib/firebaseAdmin.ts";
 import { newSession } from "../lib/firebaseSession.ts";
-import { ApiError, body, endpoint, key } from "../lib/http.ts";
-import { checkPassword, demoLoginAllowed } from "../lib/passwords.ts";
+import { activeAccount, ApiError, body, endpoint, key, roleOf } from "../lib/http.ts";
+import { checkPassword } from "../lib/passwords.ts";
 
 const attemptWindowMs = 5 * 60 * 1000;
 const maxAttempts = 8;
@@ -25,8 +26,7 @@ export default endpoint(["POST"], async (request) => {
 
   const uid: string = alias.uid;
   const profile = (await db.collection("users").doc(uid).get()).data();
-  if (!profile || profile.disabled || !demoLoginAllowed(profile) ||
-      !["student", "registrar_staff"].includes(profile.role)) {
+  if (!profile || !activeAccount(profile) || !roleOf(profile)) {
     await checkPassword(password, null);
     throw deny();
   }
@@ -43,19 +43,34 @@ export default endpoint(["POST"], async (request) => {
     return current;
   });
 
-  if (!(await checkPassword(password, record?.passwordHash)) || !record) throw deny();
-  await db.runTransaction(async (tx) => {
-    const current = (await tx.get(credentials)).data();
-    if (current?.version !== record.version) throw deny();
+  if (!(await checkPassword(password, record?.passwordHash)) || !record) {
+    if (record && (!record.attempts || Date.now() - (record.windowStartedAt ?? 0) >= attemptWindowMs)) {
+      const batch = db.batch();
+      audit(batch, { uid, role: profile.role }, "sign_in_failed", "account", uid);
+      await batch.commit();
+    }
+    throw deny();
+  }
+  const currentProfile = await db.runTransaction(async (tx) => {
+    const [credentialDoc, profileDoc] = await tx.getAll(credentials, db.collection("users").doc(uid));
+    const current = credentialDoc.data();
+    const currentProfile = profileDoc.data();
+    if (!current || current.version !== record.version || !currentProfile || !roleOf(currentProfile) ||
+        !activeAccount(currentProfile) || !Number.isInteger(currentProfile.credentialVersion)) throw deny();
     tx.update(credentials, { attempts: 0, windowStartedAt: 0 });
+    return currentProfile;
   });
+  const session = await newSession(uid, currentProfile.credentialVersion);
+  const batch = db.batch();
+  audit(batch, { uid, role: currentProfile.role }, "sign_in", "account", uid);
+  await batch.commit();
 
   return {
-    ...await newSession(uid, record.version),
-    role: profile.role,
-    ...(profile.role === "registrar_staff" ? { staff: {
-      staffId: profile.staffId, staffName: profile.staffName, office: profile.office,
-      officeShort: profile.officeShort, defaultCounterWindow: profile.defaultCounterWindow, role: profile.role,
+    ...session,
+    role: currentProfile.role,
+    ...(roleOf(currentProfile) === "staff" ? { staff: {
+      staffId: currentProfile.staffId, staffName: currentProfile.staffName, office: currentProfile.office,
+      officeShort: currentProfile.officeShort, officeId: currentProfile.officeId, defaultCounterWindow: currentProfile.defaultCounterWindow, role: currentProfile.role,
     } } : {}),
   };
 });
