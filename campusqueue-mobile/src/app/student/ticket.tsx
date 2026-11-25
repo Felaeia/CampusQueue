@@ -227,7 +227,7 @@ export default function ActiveTicketScreen() {
                 accessibilityLabel="Enlarge QR code"
                 style={({ pressed }) => [pressed && styles.qrPressed]}
               >
-                <TactileQRCode value={ticket.serial} size={114} />
+                <TactileQRCode value={ticket.qrPayload || ticket.serial} size={114} />
               </Pressable>
 
               <View style={styles.qrMetadata}>
