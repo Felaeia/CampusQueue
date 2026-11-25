@@ -1,15 +1,19 @@
 {
   "type": "module",
   "dependencies": {
-    "firebase-admin": "^14.5.1"
+    "firebase-admin": "^14.5.1",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
-    "typescript": "^7.0.2",
+    "typescript": "~6.0.3",
     "vercel": "^66.1.0"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "migrate": "node --env-file-if-exists=.env migrations/apply.ts",
+    "provision": "node --env-file-if-exists=.env migrations/provision.ts",
+    "seed:demo": "node --env-file-if-exists=.env migrations/seedDemo.ts"
   },
   "name": "campusqueue-api"
 }

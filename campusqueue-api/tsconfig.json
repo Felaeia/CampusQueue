@@ -1,13 +1,23 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESnext",
     "moduleResolution": "Bundler",
     "strict": true,
-    "noEmit": false,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "rewriteRelativeImportExtensions": true
   },
-  "include": ["api/**/*ts", "lib/**/*ts"]
+  "include": [
+    "api/**/*ts",
+    "lib/**/*ts",
+    "migrations/**/*ts"
+  ]
 }
