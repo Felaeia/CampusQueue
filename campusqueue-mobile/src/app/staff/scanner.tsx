@@ -21,7 +21,7 @@ import { VerifiedTicketData } from '../../types/staff';
 
 export default function StaffQRScanner() {
   const router = useRouter();
-  const { studentAccounts, showToast, triggerHaptic } = useQueue();
+  const { studentAccounts, showToast, triggerHaptic, liveEnabled, liveVerify } = useQueue();
   const { scannerConfig, counterWindow, servingTicket, waitingQueue, markTicketVerified } =
     useStaffQueue();
   const [permission, requestPermission] = useCameraPermissions();
@@ -51,9 +51,24 @@ export default function StaffQRScanner() {
   };
 
   // Parse student CampusQueue QR payload: cq:v1:{ticketNumber}:{usn} or CQ-2026-{ticketNumber}
+  const verifyLive = async (data: Parameters<typeof liveVerify>[0]) => {
+    try {
+      setVerifiedTicket(await liveVerify(data));
+      triggerHaptic('success');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Ticket verification failed.');
+      triggerHaptic('warning');
+    }
+  };
+
   const handleBarcodeScanned = ({ data }: { data: string }) => {
     if (!isScanning) return;
     setIsScanning(false);
+
+    if (liveEnabled) {
+      void verifyLive({ qrPayload: data });
+      return;
+    }
 
     const raw = data.trim();
     const v1Match = raw.match(/^cq:v1:([A-Z]-\d{3})(?::(\d+))?/i);
@@ -135,6 +150,12 @@ export default function StaffQRScanner() {
 
   // Manual USN Lookup Fallback
   const handleManualVerify = () => {
+    if (liveEnabled) {
+      setShowManualModal(false);
+      setIsScanning(false);
+      void verifyLive({ ticketNumber: manualTicketNum, usnSuffix: manualUsnLast4 });
+      return;
+    }
     const cleanTicket = manualTicketNum.trim().toUpperCase();
     const cleanUsn = manualUsnLast4.trim();
 

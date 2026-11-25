@@ -24,16 +24,10 @@ export interface StaffQueueContextValue {
   skippedCount: number;
   setCounterWindow: (windowLabel: string) => void;
   setDeskStatus: (status: DeskStatus) => void;
-  callNext: () => StaffQueueTicket | null;
-  completeCurrent: (
-    advance: boolean,
-    remarks?: string
-  ) => { completedNumber?: string; nextTicket?: StaffQueueTicket };
-  sendRecall: () => number;
-  skipCurrent: (reason?: string) => {
-    skippedNumber?: string;
-    nextTicket?: StaffQueueTicket;
-  };
+  callNext: ReturnType<typeof useQueue>['staffCallNext'];
+  completeCurrent: ReturnType<typeof useQueue>['staffCompleteCurrent'];
+  sendRecall: ReturnType<typeof useQueue>['staffSendRecall'];
+  skipCurrent: ReturnType<typeof useQueue>['staffSkipCurrent'];
   markTicketVerified: (ticketNumber: string) => void;
 }
 

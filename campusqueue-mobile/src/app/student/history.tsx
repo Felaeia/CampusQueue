@@ -136,8 +136,8 @@ export default function StudentHistoryScreen() {
             : 3
         }
         onClose={() => setRequeueTarget(null)}
-        onConfirm={(target) => {
-          const issued = issueTicket({
+        onConfirm={async (target) => {
+          const issued = await issueTicket({
             officeId: target.officeId,
             serviceName: target.service,
             notes: 'Re-queued from history',

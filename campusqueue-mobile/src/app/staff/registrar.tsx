@@ -69,15 +69,16 @@ export default function StaffQueueDesk() {
     });
   }, [waitingQueue, selectedService, searchQuery]);
 
-  const handleCallNext = () => {
-    const nextTicket = callNext();
+  const handleCallNext = async () => {
+    const nextTicket = await callNext();
     if (!nextTicket) return;
     triggerHaptic('success');
     showToast(`Now serving ${nextTicket.ticketNumber}`, 'matcha');
   };
 
-  const handleCompleteCurrent = (advance: boolean) => {
-    const { completedNumber, nextTicket } = completeCurrent(advance, staffRemarks);
+  const handleCompleteCurrent = async (advance: boolean) => {
+    const { completedNumber, nextTicket } = await completeCurrent(advance, staffRemarks);
+    if (!completedNumber) return;
     setShowCompleteModal(false);
     setStaffRemarks('');
     triggerHaptic('success');
@@ -89,15 +90,16 @@ export default function StaffQueueDesk() {
     }
   };
 
-  const handleSendRecall = () => {
-    sendRecall();
+  const handleSendRecall = async () => {
+    if (!(await sendRecall())) return;
     setShowRecallModal(false);
     triggerHaptic('light');
     showToast(`Recall alert sent to ${servingTicket?.ticketNumber}.`, 'dark');
   };
 
-  const handleSkipCurrent = () => {
-    const { skippedNumber, nextTicket } = skipCurrent(skipReason);
+  const handleSkipCurrent = async () => {
+    const { skippedNumber, nextTicket } = await skipCurrent(skipReason);
+    if (!skippedNumber) return;
     setShowSkipModal(false);
     triggerHaptic('warning');
 

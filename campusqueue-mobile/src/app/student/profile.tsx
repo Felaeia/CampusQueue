@@ -35,6 +35,8 @@ export default function StudentProfileScreen() {
     authDefaults,
     studentProfile,
     accountPassword,
+    liveEnabled,
+    liveChangePassword,
     updatePassword,
     togglePushAlerts,
     toggleSoundAndHaptics,
@@ -193,11 +195,12 @@ export default function StudentProfileScreen() {
 
       <ChangePasswordModal
         visible={showChangePwdModal}
-        currentAccountPassword={accountPassword}
-        minLength={authDefaults.minPasswordLength}
+        currentAccountPassword={liveEnabled ? undefined : accountPassword}
+        minLength={liveEnabled ? 8 : authDefaults.minPasswordLength}
         onClose={() => setShowChangePwdModal(false)}
-        onSavePassword={(newPwd) => {
-          updatePassword(newPwd);
+        onSavePassword={async (newPwd, currentPwd) => {
+          if (liveEnabled) await liveChangePassword(currentPwd, newPwd);
+          else updatePassword(newPwd);
           setShowChangePwdModal(false);
           triggerHaptic('success');
           showToast('Password updated successfully', 'matcha');

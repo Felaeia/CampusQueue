@@ -1,0 +1,125 @@
+[
+  {
+    "id": "registrar",
+    "name": "Registrar Office",
+    "shortLabel": "REGISTRAR",
+    "prefix": "R",
+    "windowLabel": "Window 2",
+    "officerName": "Ms. Medonza",
+    "nowServing": "",
+    "lastIssuedNumber": 0,
+    "waitingCount": 0,
+    "crowdBadge": "Peak • 16m~",
+    "themeColor": "#0E8AA8",
+    "crowdPillBg": "#E0F2FE",
+    "crowdPillText": "#0284C7",
+    "services": [
+      {
+        "id": "reg-tor",
+        "name": "TOR Request",
+        "duration": 12,
+        "docs": "Valid Student ID & Clearance Form"
+      },
+      {
+        "id": "reg-enr",
+        "name": "Enrollment Validation",
+        "duration": 5,
+        "docs": "Signed Study Load"
+      },
+      {
+        "id": "reg-cog",
+        "name": "Certificate of Grades",
+        "duration": 5,
+        "docs": "Student ID"
+      },
+      {
+        "id": "reg-slp",
+        "name": "Study Load Printout",
+        "duration": 4,
+        "docs": "Student ID"
+      }
+    ]
+  },
+  {
+    "id": "accounting",
+    "name": "Accounting Office",
+    "shortLabel": "ACCOUNTING",
+    "prefix": "A",
+    "windowLabel": "Window 1",
+    "officerName": "Ms. Shane",
+    "nowServing": "",
+    "lastIssuedNumber": 0,
+    "waitingCount": 0,
+    "crowdBadge": "Peak • 16m~",
+    "themeColor": "#134E4A",
+    "crowdPillBg": "#C4DCD9",
+    "crowdPillText": "#134E4A",
+    "services": [
+      {
+        "id": "acc-tui",
+        "name": "Tuition Fee Assessment",
+        "duration": 6,
+        "docs": "Assessment Slip"
+      },
+      {
+        "id": "acc-exm",
+        "name": "Exam Permit Issuance",
+        "duration": 4,
+        "docs": "Official Receipt"
+      },
+      {
+        "id": "acc-pro",
+        "name": "Promissory Note",
+        "duration": 8,
+        "docs": "Parent Letter & Valid ID"
+      },
+      {
+        "id": "acc-clr",
+        "name": "Financial Clearance",
+        "duration": 5,
+        "docs": "Student ID"
+      }
+    ]
+  },
+  {
+    "id": "sao",
+    "name": "Student Affairs",
+    "shortLabel": "SAO",
+    "prefix": "S",
+    "windowLabel": "Desk 1",
+    "officerName": "Ms. Alcantara",
+    "nowServing": "",
+    "lastIssuedNumber": 0,
+    "waitingCount": 0,
+    "crowdBadge": "Peak • 16m~",
+    "themeColor": "#14532D",
+    "crowdPillBg": "#A7E3B8",
+    "crowdPillText": "#14532D",
+    "services": [
+      {
+        "id": "sao-gmc",
+        "name": "Good Moral Certificate",
+        "duration": 7,
+        "docs": "2x2 ID Photo & Student ID"
+      },
+      {
+        "id": "sao-idv",
+        "name": "Student ID Validation",
+        "duration": 3,
+        "docs": "Current Study Load"
+      },
+      {
+        "id": "sao-org",
+        "name": "Org Activity Clearance",
+        "duration": 6,
+        "docs": "Activity Report"
+      },
+      {
+        "id": "sao-sch",
+        "name": "Scholarship Endorsement",
+        "duration": 8,
+        "docs": "Grade Slip & Form"
+      }
+    ]
+  }
+]

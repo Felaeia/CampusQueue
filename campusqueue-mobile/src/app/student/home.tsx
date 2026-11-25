@@ -170,9 +170,9 @@ export default function StudentHomeScreen() {
       <RequestTicketSheet
         office={requestSheetOffice}
         onClose={() => setRequestSheetOffice(null)}
-        onConfirm={(serviceName, notes) => {
+        onConfirm={async (serviceName, notes) => {
           if (!requestSheetOffice) return;
-          const issued = issueTicket({
+          const issued = await issueTicket({
             officeId: requestSheetOffice.id,
             serviceName,
             notes,

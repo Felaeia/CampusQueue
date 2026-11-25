@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -14,13 +14,17 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
 interface ChangePasswordModalProps {
   visible: boolean;
-  currentAccountPassword: string;
+  currentAccountPassword?: string;
   minLength: number;
   onClose: () => void;
-  onSavePassword: (newPassword: string) => void;
+  onSavePassword: (newPassword: string, currentPassword: string) => void | Promise<void>;
 }
 
-export function ChangePasswordModal({
+export function ChangePasswordModal(props: ChangePasswordModalProps) {
+  return props.visible ? <PasswordForm {...props} /> : null;
+}
+
+function PasswordForm({
   visible,
   currentAccountPassword,
   minLength,
@@ -31,19 +35,12 @@ export function ChangePasswordModal({
   const [newPwd, setNewPwd] = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
   const [pwdErr, setPwdErr] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (visible) {
-      setCurrentPwd('');
-      setNewPwd('');
-      setConfirmPwd('');
-      setPwdErr('');
-    }
-  }, [visible]);
-
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     setPwdErr('');
-    if (currentPwd !== currentAccountPassword) {
+    if (!currentPwd || (currentAccountPassword !== undefined && currentPwd !== currentAccountPassword)) {
       setPwdErr('Current password is incorrect.');
       return;
     }
@@ -55,7 +52,14 @@ export function ChangePasswordModal({
       setPwdErr('New passwords do not match.');
       return;
     }
-    onSavePassword(newPwd);
+    setSaving(true);
+    try {
+      await onSavePassword(newPwd, currentPwd);
+    } catch (error) {
+      setPwdErr(error instanceof Error ? error.message : 'Password could not be updated.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

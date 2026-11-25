@@ -25,6 +25,7 @@ export default function ActiveTicketScreen() {
     setSelectedTicketId,
     cancelTicket,
     advanceQueue,
+    liveEnabled,
     resetSimulation,
     triggerHaptic,
   } = useQueue();
@@ -269,7 +270,7 @@ export default function ActiveTicketScreen() {
         </Pressable>
 
         {/* Compact Live Queue Simulator Controls */}
-        <View style={styles.simulatorBar}>
+        {!liveEnabled && <View style={styles.simulatorBar}>
           <Pressable
             onPress={() => {
               const result = advanceQueue();
@@ -292,7 +293,7 @@ export default function ActiveTicketScreen() {
           >
             <Feather name="rotate-ccw" size={14} color={Colors.ink} />
           </Pressable>
-        </View>
+        </View>}
       </ScrollView>
 
       <FullScreenQRModal
@@ -307,9 +308,9 @@ export default function ActiveTicketScreen() {
         ticket={ticket}
         reasons={cancelReasons}
         onClose={() => setShowCancelModal(false)}
-        onConfirmCancel={(reason) => {
+        onConfirmCancel={async (reason) => {
+          if (!(await cancelTicket(ticket.id, reason))) return;
           setShowCancelModal(false);
-          cancelTicket(ticket.id, reason);
           router.replace('/student/home');
         }}
       />

@@ -1,6 +1,14 @@
 # CampusQueue local setup
 
-CampusQueue has two npm projects. `campusqueue-mobile` is an Expo app that currently displays a starter screen and runs independently of the API. `campusqueue-api` serves a health check and an authenticated endpoint backed by Firebase Authentication and Cloud Firestore.
+CampusQueue has two npm projects. `campusqueue-mobile` is an Expo app with student and Registrar staff screens. `campusqueue-api` is a Vercel backend that uses Firebase Authentication for sessions and Cloud Firestore for queue and account data.
+
+## What the API supports
+
+- Students can sign in with a USN, browse office services, take or cancel a waiting ticket, and view their ticket history and in-app alerts.
+- Registrar staff can sign in with a staff ID, manage counter status, call and verify tickets, recall students, and complete or skip service. The shift log records completed and skipped tickets.
+- Both roles can renew a session or change their password. Sign-in uses a CampusQueue ID and password.
+
+See the [API function reference](campusqueue-api/README.md#api-functions) for routes, required fields, responses, and errors.
 
 ## Technologies used
 
@@ -8,8 +16,8 @@ CampusQueue has two npm projects. `campusqueue-mobile` is an Expo app that curre
 | --- | --- |
 | Node.js and npm | Run the development tools and install dependencies from each project's lockfile. |
 | Expo SDK 58 and Metro | Configure the mobile app and serve its JavaScript during development. |
-| React 19.3 and React Native 0.88 | Render the mobile UI. `campusqueue-mobile/App.tsx` contains the current screen. |
-| TypeScript | Powers both projects. The lockfiles pin TypeScript 6 for mobile and TypeScript 7 for the API. |
+| React 19.3 and React Native 0.88 | Render the mobile UI. Expo Router screens live under `campusqueue-mobile/src/app/`. |
+| TypeScript | Powers both projects. Both projects use TypeScript 6. |
 | Vercel Functions and Vercel CLI | Run the HTTP handlers under `campusqueue-api/api/` locally with `vercel dev`. |
 | Firebase Admin SDK 14.5 | Verifies Firebase Authentication ID tokens and queries Cloud Firestore from the API. |
 
@@ -41,21 +49,21 @@ If PowerShell blocks the `npm.ps1` or `npx.ps1` launcher, use `npm.cmd` or `npx.
 
 ## 2. Configure Firebase for the authenticated API
 
-This step is needed for an authenticated request to `GET /api/me`. The health endpoint and mobile starter screen can run without Firebase credentials.
+Live API workflows need Firebase credentials. The health check and the mobile demo can run on their own.
 
 1. Open or create a development project in the [Firebase console](https://console.firebase.google.com/).
 2. Under **Firestore Database**, create the default database if it does not exist. The API queries the `offices` collection to verify connectivity. An empty database is enough for that check. [Firestore setup](https://firebase.google.com/docs/firestore/quickstart-server)
 3. In **Project settings → Service accounts**, obtain a Firebase Admin service-account JSON key for the development project. Keep the downloaded key outside the repository. [Firebase Admin setup](https://firebase.google.com/docs/admin/setup)
-4. Copy [the API environment template](campusqueue-api/.env.example) to `campusqueue-api/.env.local`. From the repository root, use:
+4. Copy [the API environment template](campusqueue-api/.env.example) to `campusqueue-api/.env`. From the repository root, use:
 
    ```powershell
-   Copy-Item campusqueue-api/.env.example campusqueue-api/.env.local
+   Copy-Item campusqueue-api/.env.example campusqueue-api/.env
    ```
 
    On macOS or Linux, run:
 
    ```sh
-   cp campusqueue-api/.env.example campusqueue-api/.env.local
+   cp campusqueue-api/.env.example campusqueue-api/.env
    ```
 
 5. Replace the placeholders using fields from the service-account JSON.
@@ -99,26 +107,21 @@ Expect HTTP `200` and this response:
 
 ### Verify Firebase Authentication and Firestore
 
-1. In the same development Firebase project, enable **Authentication → Sign-in method → Email/Password** and create a test user in **Authentication → Users**. Copy the project's Web API Key from **Project settings → General**.
-2. Send a `POST` request using an HTTP client to `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=YOUR_WEB_API_KEY`. Set `Content-Type: application/json` and send the following body with your test account details. Copy `idToken` from the response. [Firebase Auth REST documentation](https://firebase.google.com/docs/reference/rest/auth#section-sign-in-email-password)
+1. Set `FIREBASE_WEB_API_KEY` in the API environment using the Web API Key from Firebase **Project settings → General**. CampusQueue uses Firebase custom tokens and signs users in by USN or staff ID and password.
+2. From `campusqueue-api`, run `npm run migrate`. Follow the [backend setup guide](campusqueue-api/README.md) to provision an account or seed the development demo accounts.
+3. Send a JSON `POST` request to `http://localhost:3000/api/auth` with the sign-in ID and its password.
 
    ```json
-   {"email":"test@example.com","password":"YOUR_TEST_PASSWORD","returnSecureToken":true}
+   {"action":"sign-in","loginId":"YOUR_USN_OR_STAFF_ID","password":"YOUR_ACCOUNT_PASSWORD"}
    ```
 
-3. Replace `YOUR_ID_TOKEN` with that token and call the local API. In PowerShell:
+4. Use the returned `idToken` to verify your identity and Firestore connectivity. In PowerShell:
 
    ```powershell
    Invoke-RestMethod http://localhost:3000/api/me -Headers @{ Authorization = "Bearer YOUR_ID_TOKEN" }
    ```
 
-   On macOS or Linux:
-
-   ```sh
-   curl -i -H "Authorization: Bearer YOUR_ID_TOKEN" http://localhost:3000/api/me
-   ```
-
-Expect HTTP `200`, `success: true`, the Firebase user's `uid`, `firestoreConnected: true`, and `role: "student"` for a user without a custom role claim. A request without the Bearer header should return HTTP `401`.
+Expect HTTP `200`, `success: true`, your Firebase `uid`, `firestoreConnected: true`, and the provisioned role. A request without the Bearer header returns HTTP `401`.
 
 ## 4. Run and verify the Expo app
 
@@ -134,7 +137,7 @@ npm start
 - **iOS Simulator.** On macOS, press `i` in the Expo terminal or start it with `npm run ios`. [Expo device and simulator instructions](https://docs.expo.dev/get-started/start-developing/)
 - **Optional browser preview.** The repository has a web script. Install Expo's additional web dependencies from `campusqueue-mobile` first with `npx expo install react-dom react-native-web @expo/metro-runtime`, then run `npm run web`. Installing these packages updates the mobile package files. [Expo web setup](https://docs.expo.dev/workflow/web/)
 
-The app should show “Open up App.tsx to start working on your app!” Edit the text in `campusqueue-mobile/App.tsx` and save it to verify that the development server picks up your changes. Use `Ctrl+C` in each terminal to stop its server.
+The app opens the CampusQueue sign-in screen. Set `EXPO_PUBLIC_CAMPUSQUEUE_API_URL` in the mobile environment file and restart Expo to use the live API. With the URL unset, the app uses its demo data. Use `Ctrl+C` in each terminal to stop its server.
 
 ## Check your setup and troubleshoot
 
@@ -145,6 +148,6 @@ The app should show “Open up App.tsx to start working on your app!” Edit the
 | npm cannot reach the registry | Check network or proxy access to `registry.npmjs.org`, then retry `npm ci` in the affected folder. |
 | API health check returns `404` | Confirm you ran Vercel from `campusqueue-api` and are requesting `/api/health` on the port Vercel printed. |
 | `/api/me` returns `401` | Use a fresh Firebase ID token from the same project as the Admin credentials. Check the API terminal for Firebase configuration or token verification errors. |
-| `/api/me` returns `503` | Check that the default Firestore database exists in the selected project and the service account can read it. |
+| `/api/me` returns `500` | Check the API logs and verify that the service account can read the default Firestore database. |
 | Expo QR code opens but the device cannot connect | Check the shared network. If needed, try `npm start -- --tunnel` from `campusqueue-mobile` and scan the new code. |
 | Expo reports an SDK mismatch | Check that the installed Expo Go supports SDK 58. Run `npx expo-doctor` from `campusqueue-mobile` to check dependencies and configuration. |

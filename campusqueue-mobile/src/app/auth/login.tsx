@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -25,14 +25,20 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
  * Inputs strictly initialize empty per prototype specification.
  */
 export default function LoginScreen() {
+  const { loginResetNonce } = useQueue();
+  return <LoginForm key={loginResetNonce} />;
+}
+
+function LoginForm() {
   const router = useRouter();
   const passwordInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const {
     authDefaults,
     studentProfile,
-    loginResetNonce,
     loginStudent,
     loginStaff,
+    liveEnabled,
+    liveSignIn,
     updatePassword,
     showToast,
     triggerHaptic,
@@ -48,17 +54,8 @@ export default function LoginScreen() {
   const [showFirstLoginModal, setShowFirstLoginModal] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
 
-  useEffect(() => {
-    setIdentifier('');
-    setPassword('');
-    setErrorMsg('');
-    setShowPwd(false);
-    setFocusedField(null);
-    setShowFirstLoginModal(false);
-    setShowForgotModal(false);
-  }, [loginResetNonce]);
-
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
+    if (isLoading) return;
     setErrorMsg('');
 
     const trimmedId = identifier.trim();
@@ -69,6 +66,20 @@ export default function LoginScreen() {
     }
 
     setIsLoading(true);
+    if (liveEnabled) {
+      try {
+        const result = await liveSignIn(trimmedId, password);
+        triggerHaptic('success');
+        if (result.name) showToast(`Welcome back, ${result.name}!`, 'matcha');
+        router.replace(result.role === 'registrar_staff' ? '/staff/registrar' : '/student/home');
+      } catch (error) {
+        setErrorMsg(error instanceof Error ? error.message : 'Sign-in failed.');
+        triggerHaptic('warning');
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
     setTimeout(() => {
       setIsLoading(false);
 
@@ -188,7 +199,7 @@ export default function LoginScreen() {
 
               {/* Remember Session & Forgot Password Row */}
               <View style={styles.optionsRow}>
-                <Pressable
+                {!liveEnabled && <Pressable
                   onPress={() => setRememberSession((prev) => !prev)}
                   style={styles.rememberRow}
                 >
@@ -198,9 +209,15 @@ export default function LoginScreen() {
                     ) : null}
                   </View>
                   <Text style={styles.rememberText}>Remember session</Text>
-                </Pressable>
+                </Pressable>}
 
-                <Pressable onPress={() => setShowForgotModal(true)} hitSlop={6}>
+                <Pressable onPress={() => {
+                  if (liveEnabled) {
+                    showToast('Contact your CampusQueue administrator to reset your password.', 'dark');
+                  } else {
+                    setShowForgotModal(true);
+                  }
+                }} hitSlop={6}>
                   <Text style={styles.forgotLink}>Forgot Password?</Text>
                 </Pressable>
               </View>

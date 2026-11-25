@@ -2,5 +2,5 @@ import React from 'react';
 import { Redirect } from 'expo-router';
 
 export default function IndexRoute() {
-  return <Redirect href="/student/home" />;
+  return <Redirect href="/auth/login" />;
 }

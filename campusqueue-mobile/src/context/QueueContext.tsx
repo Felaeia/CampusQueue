@@ -9,6 +9,8 @@ import React, {
 import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 
+import { liveEnabled, useLiveQueue } from './useLiveQueue';
+
 import rawMockData from '../data/mockData.json';
 import rawStaffData from '../data/staffRegistrarData.json';
 import {
@@ -31,6 +33,7 @@ import {
   StaffAccountRecord,
   StaffQueueTicket,
   StaffRegistrarDataBundle,
+  VerifiedTicketData,
 } from '../types/staff';
 
 const mockData = rawMockData as MockDataBundle;
@@ -165,7 +168,14 @@ export interface StaffLoginResult {
   staff?: StaffAccountRecord;
 }
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface QueueContextValue {
+  liveEnabled: boolean;
+  liveRole: 'student' | 'registrar_staff' | null;
+  liveSignIn: (loginId: string, password: string) => Promise<{ role: string; name?: string }>;
+  liveChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  liveVerify: (data: { qrPayload: string } | { ticketNumber: string; usnSuffix: string }) => Promise<VerifiedTicketData>;
   authDefaults: AuthDefaults;
   studentAccounts: StudentProfile[];
   studentProfile: StudentProfile;
@@ -218,24 +228,21 @@ export interface QueueContextValue {
   markAllNotificationsRead: () => void;
 
   // Student queue actions
-  issueTicket: (input: IssueTicketInput) => ActiveTicket | null;
-  cancelTicket: (ticketId: string, reason: string) => boolean;
+  issueTicket: (input: IssueTicketInput) => MaybePromise<ActiveTicket | null>;
+  cancelTicket: (ticketId: string, reason: string) => MaybePromise<boolean>;
   advanceQueue: () => 'completed' | 'called' | 'advanced' | 'empty';
   resetSimulation: () => void;
 
   // Staff registrar actions (synced with student portal)
   setStaffCounterWindow: (windowLabel: string) => void;
   setStaffDeskStatus: (status: DeskStatus) => void;
-  staffCallNext: () => StaffQueueTicket | null;
+  staffCallNext: () => MaybePromise<StaffQueueTicket | null>;
   staffCompleteCurrent: (
     advance: boolean,
     remarks?: string
-  ) => { completedNumber?: string; nextTicket?: StaffQueueTicket };
-  staffSendRecall: () => number;
-  staffSkipCurrent: (reason?: string) => {
-    skippedNumber?: string;
-    nextTicket?: StaffQueueTicket;
-  };
+  ) => MaybePromise<{ completedNumber?: string; nextTicket?: StaffQueueTicket }>;
+  staffSendRecall: () => MaybePromise<number>;
+  staffSkipCurrent: (reason?: string) => MaybePromise<{ skippedNumber?: string; nextTicket?: StaffQueueTicket }>;
   staffMarkTicketVerified: (ticketNumber: string) => void;
 }
 
@@ -329,13 +336,6 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     const timer = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(timer);
   }, [toast]);
-
-  useEffect(() => {
-    if (activeTickets.length === 0) return;
-    if (!activeTickets.some((ticket) => ticket.id === selectedTicketId)) {
-      setSelectedTicketId(activeTickets[0].id);
-    }
-  }, [activeTickets, selectedTicketId]);
 
   const currentHeroTicket = useMemo(
     () => activeTickets.find((ticket) => ticket.id === selectedTicketId) ?? activeTickets[0] ?? null,
@@ -1160,7 +1160,16 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     showToast('Queue reset to initial synced state', 'dark');
   }, [activeStudentUsn, showToast, triggerHaptic]);
 
+  const live = useLiveQueue((message) => showToast(message, 'warning'), setCalledAlertTicket);
+  const liveActiveTickets = live.student?.activeTickets ?? [];
+  const liveHero = liveActiveTickets.find((ticket) => ticket.id === selectedTicketId) ?? liveActiveTickets[0] ?? null;
+
   const value: QueueContextValue = {
+    liveEnabled,
+    liveRole: live.role,
+    liveSignIn: live.signIn,
+    liveChangePassword: live.changePassword,
+    liveVerify: live.verify,
     authDefaults: mockData.authDefaults,
     studentAccounts: studentAccountsList,
     studentProfile,
@@ -1168,7 +1177,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     mustChangePassword: currentAccount.mustChangePassword,
     offices,
     activeTickets,
-    selectedTicketId,
+    selectedTicketId: currentHeroTicket?.id ?? selectedTicketId,
     currentHeroTicket,
     historyTickets,
     notifications,
@@ -1223,6 +1232,61 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     staffMarkTicketVerified,
   };
 
+  if (liveEnabled) {
+    const logs = live.desk?.transactions ?? [];
+    const timing = logs.filter((log) => log.outcome === "Completed" && log.durationSeconds !== undefined);
+    const averageSeconds = timing.length ? Math.round(timing.reduce((total, log) => total + (log.durationSeconds ?? 0), 0) / timing.length) : 0;
+    Object.assign(value, {
+      studentAccounts: [],
+      studentProfile: live.student?.profile ?? studentProfile,
+      accountPassword: '',
+      mustChangePassword: false,
+      offices: live.offices,
+      activeTickets: liveActiveTickets,
+      selectedTicketId: liveHero?.id ?? '',
+      currentHeroTicket: liveHero,
+      historyTickets: live.student?.historyTickets ?? [],
+      notifications: live.student?.notifications ?? [],
+      unreadNotificationsCount: live.student?.notifications.filter((notification) => !notification.read).length ?? 0,
+      historicalBasePassCount: 0,
+      staffAccounts: [],
+      activeStaff: live.staff ?? activeStaff,
+      staffCounterWindow: live.counter,
+      staffDeskStatus: live.desk?.deskStatus ?? 'closed',
+      staffServingTicket: live.desk?.servingTicket ?? null,
+      staffWaitingQueue: live.desk?.waitingQueue ?? [],
+      staffElapsedSeconds: live.elapsed,
+      staffRecallCount: live.desk?.servingTicket?.recallCount ?? 0,
+      staffTransactions: logs,
+      logsConfig: { ...staffData.logs, kpis: { ...staffData.logs.kpis, averageService: String(Math.floor(averageSeconds / 60)) + "m " + String(averageSeconds % 60) + "s" } },
+      staffServedByMeCount: logs.filter((log) => log.isMine && log.outcome === 'Completed').length,
+      staffOfficeCompletedCount: logs.filter((log) => log.outcome === 'Completed').length,
+      staffSkippedCount: logs.filter((log) => log.outcome === 'Skipped').length,
+      bumpLoginReset: () => { live.signOut(); bumpLoginReset(); },
+      issueTicket: async (input: IssueTicketInput) => {
+        const ticket = await live.issue(input);
+        if (ticket) setSelectedTicketId(ticket.id);
+        return ticket;
+      },
+      cancelTicket: live.cancel,
+      togglePushAlerts: () => { void live.preferences('pushAlerts'); },
+      toggleSoundAndHaptics: () => { void live.preferences('soundAndHaptics'); },
+      markNotificationRead: (id: string) => { void live.notification(id); },
+      markAllNotificationsRead: () => { void live.notification(); },
+      setStaffCounterWindow: live.selectCounter,
+      setStaffDeskStatus: (status: DeskStatus) => { void live.deskAction('status', { status }); },
+      staffCallNext: async () => (await live.deskAction('call-next'))?.desk?.servingTicket ?? null,
+      staffCompleteCurrent: async (advance: boolean, remarks?: string) => {
+        const response = await live.deskAction('complete', { advance, remarks });
+        return response ? { completedNumber: live.desk?.servingTicket?.ticketNumber, nextTicket: response.desk?.servingTicket ?? undefined } : {};
+      },
+      staffSendRecall: async () => (await live.deskAction('recall'))?.result.recallCount ?? 0,
+      staffSkipCurrent: async (reason?: string) => {
+        const response = await live.deskAction('skip', { reason });
+        return response ? { skippedNumber: live.desk?.servingTicket?.ticketNumber, nextTicket: response.desk?.servingTicket ?? undefined } : {};
+      },
+    } satisfies Partial<QueueContextValue>);
+  }
   return <QueueContext.Provider value={value}>{children}</QueueContext.Provider>;
 }
 
