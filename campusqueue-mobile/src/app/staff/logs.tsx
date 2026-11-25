@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Modal,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -11,12 +13,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useQueue } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
-import { LogFilterTab } from '../../types/staff';
+import { LogFilterTab, ProcessedTransaction } from '../../types/staff';
 
 export default function StaffDailyLog() {
+  const { showToast, triggerHaptic } = useQueue();
   const {
+    activeStaff,
     logsConfig,
     counterWindow,
     transactions,
@@ -27,6 +32,9 @@ export default function StaffDailyLog() {
 
   const [activeFilter, setActiveFilter] = useState<LogFilterTab>('My Counter Only');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTx, setSelectedTx] = useState<ProcessedTransaction | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'CSV' | 'PDF'>('CSV');
 
   const filteredLogs = useMemo(() => {
     return transactions.filter((item) => {
@@ -43,6 +51,28 @@ export default function StaffDailyLog() {
     });
   }, [activeFilter, counterWindow, searchQuery, transactions]);
 
+  const handleGenerateAndShare = async () => {
+    setShowExportModal(false);
+    const summaryText = [
+      logsConfig.summaryTitle,
+      `Office: ${activeStaff.officeShort} | Counter: ${counterWindow}`,
+      `Staff: ${activeStaff.staffName} (ID: ${activeStaff.staffId})`,
+      `Served by Me Today: ${servedByMeCount} | Office Completed: ${officeCompletedCount} | Skipped: ${skippedCount} | Avg Service: ${logsConfig.kpis.averageService}`,
+      `Export Format: ${exportFormat}`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        title: `CampusQueue_Shift_Summary.${exportFormat.toLowerCase()}`,
+        message: summaryText,
+      });
+      triggerHaptic('success');
+      showToast(`Shift summary exported as ${exportFormat}.`, 'matcha');
+    } catch {
+      showToast('Shift summary ready.', 'dark');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
@@ -52,6 +82,14 @@ export default function StaffDailyLog() {
           <Text style={styles.headerTitle}>Daily Queue Log</Text>
           <Text style={styles.headerSub}>{logsConfig.office} - Today&apos;s Shift</Text>
         </View>
+        <TouchableOpacity
+          style={styles.exportHeaderBtn}
+          onPress={() => setShowExportModal(true)}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="share-outline" size={16} color={Colors.ink} />
+          <Text style={styles.exportHeaderBtnText}>Export</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -131,7 +169,12 @@ export default function StaffDailyLog() {
           filteredLogs.map((tx) => {
             const isCompleted = tx.outcome === 'Completed';
             return (
-              <View key={tx.id} style={styles.ticketCard}>
+              <TouchableOpacity
+                key={tx.id}
+                style={styles.ticketCard}
+                onPress={() => setSelectedTx(tx)}
+                activeOpacity={0.85}
+              >
                 <View style={styles.ticketTopRow}>
                   <View style={styles.officeTag}>
                     <Text style={styles.officeTagText}>REGISTRAR</Text>
@@ -171,11 +214,103 @@ export default function StaffDailyLog() {
                     <Text style={styles.durationValue}>{tx.durationFormatted}</Text>
                   </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
       </ScrollView>
+
+      <Modal
+        visible={showExportModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowExportModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Export Shift Summary</Text>
+            <Text style={styles.modalSub}>Choose a format for sharing.</Text>
+            <View style={styles.exportOptions}>
+              {(['CSV', 'PDF'] as const).map((format) => (
+                <TouchableOpacity
+                  key={format}
+                  style={[styles.exportOption, exportFormat === format && styles.exportOptionActive]}
+                  onPress={() => setExportFormat(format)}
+                >
+                  <Text
+                    style={[
+                      styles.exportOptionText,
+                      exportFormat === format && styles.exportOptionTextActive,
+                    ]}
+                  >
+                    {format}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalSecondaryButton}
+                onPress={() => setShowExportModal(false)}
+              >
+                <Text style={styles.modalSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalPrimaryButton}
+                onPress={handleGenerateAndShare}
+              >
+                <Text style={styles.modalPrimaryText}>Share</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={selectedTx !== null}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => setSelectedTx(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          {selectedTx && (
+            <View style={[styles.modalCard, styles.detailModal]}>
+              <View style={styles.detailHeader}>
+                <View>
+                  <Text style={styles.modalTitle}>{selectedTx.ticketNumber}</Text>
+                  <Text style={styles.modalSub}>{selectedTx.studentName}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedTx(null)}>
+                  <Ionicons name="close-circle" size={24} color={Colors.inkSoft} />
+                </TouchableOpacity>
+              </View>
+              {[
+                ['USN', selectedTx.usn],
+                ['Service', selectedTx.serviceType],
+                ['Issued', selectedTx.issuedAt],
+                ['Called', selectedTx.calledAt],
+                ...(selectedTx.verifiedAt
+                  ? ([['Verified', selectedTx.verifiedAt]] as [string, string][])
+                  : []),
+                ['Closed', selectedTx.closedAt],
+              ].map(([label, value]) => (
+                <View key={label} style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>{label}</Text>
+                  <Text style={styles.detailValue}>{value}</Text>
+                </View>
+              ))}
+              {selectedTx.remarks && (
+                <View style={styles.remarksBox}>
+                  <Text style={styles.detailLabel}>Remarks</Text>
+                  <Text style={styles.detailValue}>{selectedTx.remarks}</Text>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -200,6 +335,22 @@ const styles = StyleSheet.create({
     color: Colors.inkSoft,
     fontFamily: Fonts.bodyMedium,
     marginTop: 3,
+    fontSize: 13,
+  },
+  exportHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 12,
+    height: 38,
+  },
+  exportHeaderBtnText: {
+    color: Colors.ink,
+    fontFamily: Fonts.bodyBold,
     fontSize: 13,
   },
   scrollContainer: { flex: 1 },
@@ -364,5 +515,76 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     marginTop: 3,
     fontVariant: ['tabular-nums'],
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: Colors.backdropSheet,
+  },
+  modalCard: {
+    borderTopLeftRadius: Radii.modal,
+    borderTopRightRadius: Radii.modal,
+    backgroundColor: Colors.surface,
+    padding: 20,
+    paddingBottom: 28,
+  },
+  detailModal: { maxHeight: '82%' },
+  modalTitle: {
+    color: Colors.ink,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 20,
+    letterSpacing: -0.4,
+  },
+  modalSub: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    marginTop: 4,
+  },
+  exportOptions: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  exportOption: {
+    flex: 1,
+    height: 46,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radii.lg,
+  },
+  exportOptionActive: { backgroundColor: Colors.ink, borderColor: Colors.ink },
+  exportOptionText: { color: Colors.ink, fontFamily: Fonts.bodyBold },
+  exportOptionTextActive: { color: Colors.surface },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 18 },
+  modalSecondaryButton: { height: 44, justifyContent: 'center', paddingHorizontal: 16 },
+  modalSecondaryText: { color: Colors.inkSoft, fontFamily: Fonts.bodyBold },
+  modalPrimaryButton: {
+    height: 44,
+    justifyContent: 'center',
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.ink,
+    paddingHorizontal: 20,
+  },
+  modalPrimaryText: { color: Colors.matcha, fontFamily: Fonts.bodyBold },
+  detailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  detailLabel: { color: Colors.inkSoft, fontFamily: Fonts.bodyMedium, fontSize: 12 },
+  detailValue: { color: Colors.ink, fontFamily: Fonts.bodyBold, fontSize: 12 },
+  remarksBox: {
+    borderRadius: Radii.lg,
+    backgroundColor: Colors.surfaceSubtle,
+    padding: 12,
+    marginTop: 12,
+    gap: 4,
   },
 });
