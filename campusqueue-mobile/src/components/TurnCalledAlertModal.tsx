@@ -57,7 +57,10 @@ export function TurnCalledAlertModal() {
           </View>
 
           <View style={styles.qrWrap}>
-            <TactileQRCode value={calledAlertTicket.serial} size={136} />
+            <TactileQRCode
+              value={calledAlertTicket.qrPayload || calledAlertTicket.serial}
+              size={136}
+            />
           </View>
 
           <Pressable

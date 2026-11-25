@@ -50,7 +50,7 @@ export function FullScreenQRModal({
           </View>
 
           <View style={styles.qrWrap}>
-            <TactileQRCode value={ticket.serial} size={244} />
+            <TactileQRCode value={ticket.qrPayload || ticket.serial} size={244} />
           </View>
 
           <Text style={styles.caption}>

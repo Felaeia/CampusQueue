@@ -19,6 +19,210 @@
     "pushAlerts": true,
     "soundAndHaptics": true
   },
+  "studentAccounts": [
+    {
+      "profile": {
+        "fullName": "Manuel Cando",
+        "firstName": "Manuel",
+        "firstLetter": "M",
+        "holderShort": "Manuel C.",
+        "usn": "23000440130",
+        "studentId": "C23-01-6767-MAN121",
+        "program": "BSIT 4th Year",
+        "institution": "ACLC College of Mandaue",
+        "campusShort": "ACLC Mandaue",
+        "email": "manuel.cando@aclc.edu.ph",
+        "pushAlerts": true,
+        "soundAndHaptics": true
+      },
+      "password": "student123",
+      "mustChangePassword": true,
+      "historicalBasePassCount": 8,
+      "activeTickets": [
+        {
+          "id": "R-042",
+          "ticketNumber": "R-042",
+          "sequence": 42,
+          "officeId": "registrar",
+          "officeName": "Registrar Office",
+          "shortOffice": "Registrar",
+          "counter": "Window 2",
+          "status": "waiting",
+          "service": "TOR Request",
+          "holderShort": "Manuel C.",
+          "studentUsn": "23000440130",
+          "serial": "CQ-2026-R042",
+          "qrPayload": "cq:v1:R-042:23000440130",
+          "issuedAt": "11-05 9:45 AM",
+          "estWaitMins": 12,
+          "aheadCount": 3,
+          "nowServing": "R-039",
+          "trackNodes": ["040", "041"],
+          "notes": ""
+        }
+      ],
+      "historyTickets": [
+        {
+          "id": "R-018",
+          "ticketNumber": "R-018",
+          "officeId": "registrar",
+          "officeName": "Registrar Office",
+          "service": "Enrollment Validation",
+          "status": "Completed",
+          "timestamp": "Nov 10, 2026 • 10:14 AM",
+          "issuedAt": "Nov 10, 2026 • 09:58 AM",
+          "calledAt": "Nov 10, 2026 • 10:09 AM",
+          "counter": "Window 1",
+          "waitDuration": "11 mins"
+        },
+        {
+          "id": "A-064",
+          "ticketNumber": "A-064",
+          "officeId": "accounting",
+          "officeName": "Accounting Office",
+          "service": "Tuition Fee Assessment",
+          "status": "Completed",
+          "timestamp": "Nov 04, 2026 • 02:35 PM",
+          "issuedAt": "Nov 04, 2026 • 02:18 PM",
+          "calledAt": "Nov 04, 2026 • 02:29 PM",
+          "counter": "Cashier 2",
+          "waitDuration": "11 mins"
+        },
+        {
+          "id": "S-011",
+          "ticketNumber": "S-011",
+          "officeId": "sao",
+          "officeName": "Student Affairs",
+          "service": "Good Moral Certificate",
+          "status": "Skipped",
+          "timestamp": "Oct 28, 2026 • 11:02 AM",
+          "issuedAt": "Oct 28, 2026 • 10:41 AM",
+          "calledAt": "Oct 28, 2026 • 10:57 AM",
+          "counter": "Desk 1",
+          "waitDuration": "16 mins"
+        },
+        {
+          "id": "R-009",
+          "ticketNumber": "R-009",
+          "officeId": "registrar",
+          "officeName": "Registrar Office",
+          "service": "Study Load Printout",
+          "status": "Cancelled",
+          "timestamp": "Oct 19, 2026 • 09:15 AM",
+          "issuedAt": "Oct 19, 2026 • 09:11 AM",
+          "calledAt": "—",
+          "counter": "Window 3",
+          "waitDuration": "04 mins"
+        }
+      ],
+      "notifications": [
+        {
+          "id": "n-1",
+          "title": "Heads up! You are 3rd in line.",
+          "message": "Ticket R-042 at Registrar Office (Window 2). Please head to the Registrar lobby now.",
+          "time": "9:45 AM",
+          "read": false,
+          "dotColor": "#B8F23A"
+        },
+        {
+          "id": "n-2",
+          "title": "Queue Pass R-042 Issued",
+          "message": "TOR Request • Serial CQ-2026-R042 confirmed.",
+          "time": "9:45 AM",
+          "read": true,
+          "dotColor": "#0E8AA8"
+        }
+      ]
+    },
+    {
+      "profile": {
+        "fullName": "Michelle Bulahan",
+        "firstName": "Michelle",
+        "firstLetter": "M",
+        "holderShort": "Michelle B.",
+        "usn": "23000440129",
+        "studentId": "C23-01-6768-MIC122",
+        "program": "BSIT 4th Year",
+        "institution": "ACLC College of Mandaue",
+        "campusShort": "ACLC Mandaue",
+        "email": "michelle.bulahan@aclc.edu.ph",
+        "pushAlerts": true,
+        "soundAndHaptics": true
+      },
+      "password": "student456",
+      "mustChangePassword": false,
+      "historicalBasePassCount": 5,
+      "activeTickets": [
+        {
+          "id": "R-041",
+          "ticketNumber": "R-041",
+          "sequence": 41,
+          "officeId": "registrar",
+          "officeName": "Registrar Office",
+          "shortOffice": "Registrar",
+          "counter": "Window 2",
+          "status": "waiting",
+          "service": "Study Load Printout",
+          "holderShort": "Michelle B.",
+          "studentUsn": "23000440129",
+          "serial": "CQ-2026-R041",
+          "qrPayload": "cq:v1:R-041:23000440129",
+          "issuedAt": "11-05 9:41 AM",
+          "estWaitMins": 8,
+          "aheadCount": 2,
+          "nowServing": "R-039",
+          "trackNodes": ["040"],
+          "notes": ""
+        }
+      ],
+      "historyTickets": [
+        {
+          "id": "R-014",
+          "ticketNumber": "R-014",
+          "officeId": "registrar",
+          "officeName": "Registrar Office",
+          "service": "Certificate of Grades",
+          "status": "Completed",
+          "timestamp": "Nov 08, 2026 • 11:20 AM",
+          "issuedAt": "Nov 08, 2026 • 11:05 AM",
+          "calledAt": "Nov 08, 2026 • 11:14 AM",
+          "counter": "Window 2",
+          "waitDuration": "09 mins"
+        },
+        {
+          "id": "A-052",
+          "ticketNumber": "A-052",
+          "officeId": "accounting",
+          "officeName": "Accounting Office",
+          "service": "Exam Permit Issuance",
+          "status": "Completed",
+          "timestamp": "Nov 02, 2026 • 01:45 PM",
+          "issuedAt": "Nov 02, 2026 • 01:32 PM",
+          "calledAt": "Nov 02, 2026 • 01:40 PM",
+          "counter": "Window 1",
+          "waitDuration": "08 mins"
+        }
+      ],
+      "notifications": [
+        {
+          "id": "nm-1",
+          "title": "Heads up! You are 2nd in line.",
+          "message": "Ticket R-041 at Registrar Office (Window 2). Please head to the Registrar lobby now.",
+          "time": "9:41 AM",
+          "read": false,
+          "dotColor": "#B8F23A"
+        },
+        {
+          "id": "nm-2",
+          "title": "Queue Pass R-041 Issued",
+          "message": "Study Load Printout • Serial CQ-2026-R041 confirmed.",
+          "time": "9:41 AM",
+          "read": true,
+          "dotColor": "#0E8AA8"
+        }
+      ]
+    }
+  ],
   "offices": [
     {
       "id": "registrar",
@@ -29,7 +233,7 @@
       "officerName": "Ms. Medonza",
       "nowServing": "R-039",
       "lastIssuedNumber": 42,
-      "waitingCount": 4,
+      "waitingCount": 3,
       "crowdBadge": "Peak • 16m~",
       "themeColor": "#0E8AA8",
       "crowdPillBg": "#E0F2FE",
@@ -156,7 +360,9 @@
       "status": "waiting",
       "service": "TOR Request",
       "holderShort": "Manuel C.",
+      "studentUsn": "23000440130",
       "serial": "CQ-2026-R042",
+      "qrPayload": "cq:v1:R-042:23000440130",
       "issuedAt": "11-05 9:45 AM",
       "estWaitMins": 12,
       "aheadCount": 3,
