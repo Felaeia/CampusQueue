@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>API Tester · CampusQueue</title>
+  <link rel="stylesheet" href="/api-tester.css">
+  <script type="module" src="/api-tester.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <span class="brand"><span class="brand-mark" aria-hidden="true">CQ</span> CampusQueue</span>
+      <div class="session">
+        <span id="session-status" role="status">No session</span>
+        <button id="clear-session" class="secondary" type="button" hidden>Clear session</button>
+      </div>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="intro">
+      <div>
+        <h1>API tester</h1>
+        <p>Choose a test, edit the request, and inspect the live response.</p>
+      </div>
+      <code id="origin"></code>
+    </div>
+    <label class="search">
+      <span>Filter tests</span>
+      <input id="search" type="search" placeholder="Search by endpoint, action, or role">
+    </label>
+    <div class="column-labels" aria-hidden="true">
+      <span>Endpoint &amp; example input</span>
+      <span>Expected response</span>
+    </div>
+    <div id="catalog"></div>
+    <p id="empty" role="status" hidden>No tests match your search.</p>
+    <noscript>Enable JavaScript to use the API tester.</noscript>
+  </main>
+  <dialog id="request-dialog" aria-labelledby="request-title">
+    <div class="dialog-header">
+      <div>
+        <h2 id="request-title">Make a request</h2>
+        <p id="request-route" class="route"></p>
+      </div>
+      <button id="close-dialog" class="secondary" type="button" aria-label="Close request">Close</button>
+    </div>
+    <form id="request-form" autocomplete="off">
+      <div class="request-grid">
+        <div class="fields">
+          <label>Query string <input id="query" type="text" spellcheck="false" placeholder="key=value"></label>
+          <label id="token-field">Bearer ID token <input id="token" type="password" spellcheck="false" placeholder="Paste an ID token"></label>
+          <label id="body-field"><span id="body-label">Request body</span><textarea id="body" rows="8" spellcheck="false"></textarea></label>
+        </div>
+        <div>
+          <h3>Expected response <span class="expected-code">200</span></h3>
+          <pre id="expected"></pre>
+          <p id="response-note" class="note" hidden></p>
+        </div>
+      </div>
+      <div class="send-row">
+        <p id="request-note" class="note"></p>
+        <button id="send" class="primary" type="submit">Send request</button>
+      </div>
+    </form>
+    <section class="response" aria-labelledby="response-title">
+      <div class="response-header">
+        <h3 id="response-title">Live response</h3>
+        <span id="response-status" role="status">Ready to send</span>
+      </div>
+      <p id="response-check" class="note" role="status" hidden></p>
+      <pre id="response-body" hidden tabindex="0" aria-label="Response body"></pre>
+      <button id="download" class="secondary" type="button" hidden>Download response</button>
+    </section>
+  </dialog>
+</body>
+</html>
