@@ -154,7 +154,7 @@ pre {
 .note { font-size: 0.8rem; color: var(--muted); }
 #response-note { margin-top: 0.45rem; }
 .send-row { margin-top: 1rem; }
-.send-row button { flex-shrink: 0; }
+.request-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-left: auto; }
 .primary, .secondary { padding: 0.4rem 0.7rem; border-radius: 0.4rem; font-weight: 650; }
 .primary { border: 1px solid #80a825; background: var(--accent); color: var(--ink); }
 .primary:hover { background: #a9e02b; }
@@ -179,5 +179,7 @@ pre {
   .endpoint .example:nth-child(2) { grid-column: 1; padding-top: 0.55rem; border-top: 1px dashed var(--border); }
   .endpoint .arrow { grid-area: 1 / 2; }
   .request-grid { grid-template-columns: minmax(0, 1fr); }
+  .send-row { align-items: flex-start; flex-direction: column; gap: 0.5rem; }
+  #request-note:empty { display: none; }
   .dialog-header, form, .response { padding-inline: 0.85rem; }
 }
