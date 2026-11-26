@@ -1,0 +1,194 @@
+import React, { useEffect, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+
+import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
+import { AdminOfficeRecord, AdminUserRecord } from '../../types/admin';
+
+const WINDOW_OPTIONS = ['Window 1', 'Window 2', 'Window 3', 'Window 4'];
+
+interface EditUserRoleAndOfficeModalProps {
+  user: AdminUserRecord | null;
+  offices: AdminOfficeRecord[];
+  onClose: () => void;
+  onSave: (userId: string, officeId: string, defaultWindow: string) => void;
+}
+
+export function EditUserRoleAndOfficeModal({
+  user,
+  offices,
+  onClose,
+  onSave,
+}: EditUserRoleAndOfficeModalProps) {
+  const [selectedOfficeId, setSelectedOfficeId] = useState(offices[0]?.id ?? '');
+  const [selectedWindow, setSelectedWindow] = useState('Window 1');
+
+  useEffect(() => {
+    if (user) {
+      setSelectedOfficeId(user.assignedOfficeId ?? offices[0]?.id ?? '');
+      setSelectedWindow(user.defaultWindow ?? 'Window 1');
+    }
+  }, [offices, user]);
+
+  if (!user) return null;
+
+  return (
+    <Modal visible={Boolean(user)} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable style={[styles.card, Shadows.modal]} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.headerRow}>
+            <View style={styles.flex}>
+              <Text style={styles.title}>Edit Staff Assignment</Text>
+              <Text style={styles.subtitle}>
+                {user.fullName} • {user.identifier}
+              </Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Feather name="x" size={18} color={Colors.inkSoft} />
+            </Pressable>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Assigned Campus Office</Text>
+            <View style={styles.chipRow}>
+              {offices.map((office) => {
+                const active = selectedOfficeId === office.id;
+                return (
+                  <Pressable
+                    key={office.id}
+                    onPress={() => setSelectedOfficeId(office.id)}
+                    style={[styles.chip, active && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                      {office.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Default Counter Window</Text>
+            <View style={styles.chipRow}>
+              {WINDOW_OPTIONS.map((win) => {
+                const active = selectedWindow === win;
+                return (
+                  <Pressable
+                    key={win}
+                    onPress={() => setSelectedWindow(win)}
+                    style={[styles.chip, active && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{win}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.actionsRow}>
+            <Pressable
+              onPress={onClose}
+              style={({ pressed }) => [styles.cancelBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                onSave(user.id, selectedOfficeId, selectedWindow);
+                onClose();
+              }}
+              style={({ pressed }) => [styles.saveBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.saveText}>Save Assignment</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  backdrop: {
+    flex: 1,
+    backgroundColor: Colors.backdrop,
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.modal,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 20,
+    gap: 14,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  title: {
+    fontFamily: Fonts.displayBold,
+    fontSize: 16.5,
+    color: Colors.ink,
+  },
+  subtitle: {
+    fontFamily: Fonts.monoMedium,
+    fontSize: 12,
+    color: Colors.inkSoft,
+    marginTop: 2,
+  },
+  fieldGroup: { gap: 8 },
+  label: {
+    fontFamily: Fonts.bodySemiBold,
+    fontSize: 12,
+    color: Colors.ink,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSubtle,
+  },
+  chipActive: {
+    backgroundColor: Colors.ink,
+    borderColor: Colors.ink,
+  },
+  chipText: {
+    fontFamily: Fonts.bodySemiBold,
+    fontSize: 12,
+    color: Colors.inkSoft,
+  },
+  chipTextActive: { color: Colors.matcha },
+  actionsRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  cancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSubtle,
+    alignItems: 'center',
+  },
+  cancelText: { fontFamily: Fonts.bodyBold, fontSize: 13, color: Colors.ink },
+  saveBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: Radii.lg,
+    backgroundColor: Colors.ink,
+    alignItems: 'center',
+  },
+  saveText: { fontFamily: Fonts.bodyBold, fontSize: 13, color: Colors.surface },
+  pressed: { opacity: 0.84 },
+});

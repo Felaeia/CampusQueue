@@ -5,7 +5,7 @@ import type { DeskStatus, ProcessedTransaction, StaffAccountRecord, StaffQueueTi
 export const liveEnabled = Boolean(process.env.EXPO_PUBLIC_CAMPUSQUEUE_API_URL);
 const base = process.env.EXPO_PUBLIC_CAMPUSQUEUE_API_URL?.replace(/\/$/, '');
 
-type Role = 'student' | 'registrar_staff';
+type Role = 'student' | 'staff' | 'registrar_staff' | 'admin';
 type Tokens = { idToken: string; refreshToken: string; expiresIn: string };
 type Session = { tokens: Tokens; expires: number; role: Role; staff?: StaffAccountRecord };
 type StudentState = { profile: StudentProfile; activeTickets: ActiveTicket[]; historyTickets: HistoryTicket[]; notifications: NotificationItem[] };
@@ -105,6 +105,9 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
         }
       }
       return { student: state };
+    }
+    if (session.role === 'admin') {
+      return {};
     }
     const state = await request<DeskState>(`registrar?counter=${encodeURIComponent(selectedCounter)}`, undefined, token);
     if (sessionRef.current === session && revision === latestLoad.current) setDesk(state);
@@ -215,6 +218,41 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
     verify: async (data: { qrPayload: string } | { ticketNumber: string; usnSuffix: string }) => {
       const { result } = await mutate<{ ticket: VerifiedTicketData }>('registrar', { action: 'verify', counter, ...data });
       return result.ticket;
+    },
+    adminRequest: async <T,>(query: string, data?: object, method?: 'GET' | 'POST' | 'PATCH'): Promise<T> => {
+      const session = sessionRef.current;
+      if (!session) throw new Error('Sign in to continue.');
+      const token = await authorize(session);
+      const httpMethod = method ?? (data ? 'POST' : 'GET');
+      const response = await fetch(`${base}/api/admin?${query}`, {
+        method: httpMethod,
+        headers: {
+          ...(data ? { 'Content-Type': 'application/json' } : {}),
+          Authorization: `Bearer ${token}`,
+        },
+        body: data ? JSON.stringify(data) : undefined,
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        if ([401, 403].includes(response.status) && sessionRef.current === session) signOut();
+        throw new ApiResponseError(result?.error ?? `Admin request failed (${response.status}).`, response.status);
+      }
+      return result as T;
+    },
+    adminDownload: async (query: string): Promise<string> => {
+      const session = sessionRef.current;
+      if (!session) throw new Error('Sign in to continue.');
+      const token = await authorize(session);
+      const response = await fetch(`${base}/api/admin?${query}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        if ([401, 403].includes(response.status) && sessionRef.current === session) signOut();
+        throw new ApiResponseError(text || `Report download failed (${response.status}).`, response.status);
+      }
+      return text;
     },
   };
 }
