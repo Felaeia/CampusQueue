@@ -38,7 +38,7 @@ export function getOfficeMinutesPerStudent(
 export function hasActiveNowServing(nowServing?: string | null): boolean {
   if (!nowServing) return false;
   const trimmed = nowServing.trim();
-  return trimmed.length > 0 && trimmed !== 'â€”' && trimmed !== '-';
+  return trimmed.length > 0 && trimmed !== '—' && trimmed !== '-';
 }
 
 export function calculateEstimatedWaitMinutes(params: {
@@ -107,8 +107,127 @@ export function formatOfficeCrowdBadge(
     return 'Queue clear';
   }
   if (waiting === 0) {
-    return `Serving â€¢ ~${estMins}m`;
+    return `Serving • ~${estMins}m`;
   }
-  return `${waiting} waiting â€¢ ~${estMins}m`;
+  return `${waiting} waiting • ~${estMins}m`;
 }
 
+export function isTicketCalledOrServing(
+  ticket?: Pick<ActiveTicket, 'status' | 'lifecycleStatus'> | null
+): boolean {
+  if (!ticket) return false;
+  return (
+    ticket.lifecycleStatus === 'called' ||
+    ticket.lifecycleStatus === 'serving' ||
+    ticket.status === 'serving'
+  );
+}
+
+/**
+ * Normalizes a live ticket returned by `GET /api/student` so position and wait
+ * time reflect both waiting students ahead and any student currently being served.
+ */
+export function normalizeActiveTicket(
+  ticket: ActiveTicket,
+  office?: Office | null
+): ActiveTicket {
+  const serving = isTicketCalledOrServing(ticket);
+  const nowServing = ticket.nowServing || office?.nowServing || '';
+  const rawAhead = Math.max(0, ticket.aheadCount ?? 0);
+
+  if (serving) {
+    return {
+      ...ticket,
+      status: 'serving',
+      aheadCount: 0,
+      estWaitMins: 0,
+      nowServing: nowServing || ticket.ticketNumber,
+      trackNodes: [],
+    };
+  }
+
+  const effectiveAhead = rawAhead + (hasActiveNowServing(nowServing) ? 1 : 0);
+  const matchedService = office?.services.find(
+    (s) => (ticket.serviceId && s.id === ticket.serviceId) || s.name === ticket.service
+  );
+  const estWaitMins = calculateEstimatedWaitMinutes({
+    officeId: ticket.officeId,
+    officeName: ticket.officeName || office?.name,
+    peopleAhead: effectiveAhead,
+    fallbackMinutesPerStudent: matchedService?.duration ?? getAverageServiceDuration(office),
+    backendEstimate: ticket.estWaitMins,
+  });
+
+  const trackNodes =
+    Array.isArray(ticket.trackNodes) && ticket.trackNodes.length > 0
+      ? ticket.trackNodes
+      : effectiveAhead > 1
+        ? Array.from({ length: Math.min(2, effectiveAhead - 1) }, (_, idx) => `#${idx + 1}`)
+        : [];
+
+  return {
+    ...ticket,
+    status: 'waiting',
+    aheadCount: effectiveAhead,
+    estWaitMins,
+    nowServing,
+    trackNodes,
+    shortOffice: ticket.shortOffice || office?.shortLabel || ticket.officeName.replace(' Office', ''),
+    counter: ticket.counter || office?.windowLabel || 'Counter',
+  };
+}
+
+export function computeStaffWaitingEstimateMins(
+  indexInWaitingQueue: number,
+  hasServingTicket: boolean,
+  officeId?: string | null,
+  officeName?: string | null,
+  fallbackDuration?: number
+): number {
+  const peopleAhead = Math.max(0, indexInWaitingQueue) + (hasServingTicket ? 1 : 0);
+  return calculateEstimatedWaitMinutes({
+    officeId,
+    officeName,
+    peopleAhead,
+    fallbackMinutesPerStudent: fallbackDuration,
+  });
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
+export function formatDisplayTimestamp(
+  value?: string | null,
+  mode: 'time' | 'short' | 'datetime' = 'short'
+): string {
+  if (!value || !value.trim()) return '—';
+  const trimmed = value.trim();
+  if (!ISO_DATE_RE.test(trimmed)) return trimmed;
+
+  const date = new Date(trimmed);
+  if (!Number.isFinite(date.valueOf())) return trimmed;
+
+  const timePart = date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+  if (mode === 'time') return timePart;
+
+  const datePart = date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+  });
+  if (mode === 'short') return `${datePart} • ${timePart}`;
+
+  const fullDatePart = date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  });
+  return `${fullDatePart} • ${timePart}`;
+}
+
+export function manilaDateString(offsetDays = 0): string {
+  const manilaMs = Date.now() + 8 * 60 * 60 * 1000 + offsetDays * 86_400_000;
+  return new Date(manilaMs).toISOString().slice(0, 10);
+}
