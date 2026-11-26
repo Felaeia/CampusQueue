@@ -2,6 +2,10 @@
 
 Expo SDK 58 mobile application for the **CampusQueue — ACLC College of Mandaue Student Services** portal, migrated from `campusqueue_mobile_ui_ux_prototype` using Expo Router, TypeScript, `react-native-svg`, `@expo/vector-icons`, and centralized JSON mock data.
 
+## Backend integration
+
+For the deployed backend URL, role routing, endpoint examples, and known deployment issues, see the [Frontend API guide](../campusqueue-api/FRONTEND_API_GUIDE.md).
+
 ## Architecture Overview
 
 - **Routing (`src/app/`)** — Expo Router file-based routes matching the prototype flow:
