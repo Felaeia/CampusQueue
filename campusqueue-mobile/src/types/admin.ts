@@ -158,16 +158,3 @@ export interface SendBroadcastInput {
   title: string;
   message: string;
 }
-
-export interface AdminDataBundle {
-  adminAccounts: AdminAccount[];
-  kpisByRange: Record<AdminDateRange, AdminKpiSnapshot>;
-  offices: AdminOfficeRecord[];
-  users: AdminUserRecord[];
-  directoryTotalBadges: {
-    staff: number;
-    students: number;
-    admins: number;
-  };
-  auditRecords: AdminAuditRecord[];
-}

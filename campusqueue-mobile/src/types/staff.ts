@@ -4,14 +4,21 @@ export type LogOutcome = 'Completed' | 'Skipped';
 
 export type LogFilterTab = 'My Counter Only' | 'All Office Counters' | 'Skipped Only';
 
+export interface StaffCounterOption {
+  id: string;
+  name: string;
+  status: DeskStatus;
+}
+
 export interface StaffAccountRecord {
   staffId: string;
-  password: string;
   staffName: string;
   office: string;
   officeShort: string;
+  officeId?: string;
   defaultCounterWindow: string;
-  role: 'registrar_staff';
+  counterIds?: string[];
+  role: 'staff' | 'registrar_staff';
 }
 
 export interface StaffQueueTicket {
@@ -22,18 +29,27 @@ export interface StaffQueueTicket {
   program: string;
   serviceType: string;
   waitMinutes: number;
+  estWaitMins?: number;
   issuedAt: string;
+  calledAt?: string | null;
+  startedAt?: string | null;
+  acknowledgedAt?: string | null;
+  recallCount?: number;
+  status?: 'waiting' | 'called' | 'serving' | string;
   notes?: string;
   isQrVerified: boolean;
 }
 
 export interface VerifiedTicketData {
+  id?: string;
   ticketNumber: string;
   studentName: string;
   usn: string;
   program: string;
   serviceType: string;
   issuedAt: string;
+  status?: string;
+  isQrVerified?: boolean;
   method: 'qr_scan' | 'manual_usn_check';
 }
 
@@ -44,6 +60,7 @@ export interface ProcessedTransaction {
   usn: string;
   serviceType: string;
   outcome: LogOutcome;
+  lifecycleStatus?: string;
   counterWindow: string;
   staffName: string;
   issuedAt: string;
@@ -51,44 +68,7 @@ export interface ProcessedTransaction {
   verifiedAt?: string;
   closedAt: string;
   durationFormatted: string;
+  durationSeconds?: number;
+  isMine?: boolean;
   remarks?: string;
-}
-
-export interface StaffRegistrarDataBundle {
-  staffAccounts: StaffAccountRecord[];
-  desk: {
-    staffName: string;
-    staffId: string;
-    office: string;
-    initialCounterWindow: string;
-    initialElapsedSeconds: number;
-    services: string[];
-    initialServing: StaffQueueTicket;
-    initialWaiting: StaffQueueTicket[];
-  };
-  scanner: {
-    expectedTicket: string;
-    manualUsnSuffix: string;
-    verifiedTicket: Omit<VerifiedTicketData, 'method'>;
-    wrongOfficeError: string;
-    invalidQrError: string;
-    manualInputError: string;
-    manualPlaceholder: string;
-    usnPlaceholder: string;
-  };
-  logs: {
-    staffName: string;
-    staffId: string;
-    office: string;
-    counter: string;
-    summaryTitle: string;
-    filterTabs: LogFilterTab[];
-    kpis: {
-      servedByMe: string;
-      officeCompleted: string;
-      skipped: string;
-      averageService: string;
-    };
-    transactions: ProcessedTransaction[];
-  };
 }
