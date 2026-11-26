@@ -207,19 +207,22 @@ export default function AdminOverviewScreen() {
             </View>
             <View style={styles.skeletonChart} />
           </View>
-        ) : kpi.totalIssued === 0 ? (
-          /* Empty State */
-          <View style={[styles.emptyStateCard, Shadows.card]}>
-            <View style={styles.emptyIconCircle}>
-              <Feather name="sunrise" size={22} color={Colors.inkSoft} />
-            </View>
-            <Text style={styles.emptyTitle}>0 Tickets Issued Today</Text>
-            <Text style={styles.emptySub}>
-              Campus offices scheduled to open at 8:00 AM
-            </Text>
-          </View>
         ) : (
           <>
+            {/* Empty Day Notice Banner (keeps KPIs & Live Office Monitor visible) */}
+            {kpi.totalIssued === 0 ? (
+              <View style={[styles.emptyStateCard, Shadows.card]}>
+                <View style={styles.emptyIconCircle}>
+                  <Feather name="sunrise" size={20} color={Colors.inkSoft} />
+                </View>
+                <Text style={styles.emptyTitle}>0 Tickets Issued Today</Text>
+                <Text style={styles.emptySub}>
+                  Campus offices scheduled to open at 8:00 AM • Switch date range to view historical
+                  activity.
+                </Text>
+              </View>
+            ) : null}
+
             {/* Bento KPI Summary Grid */}
             <View style={styles.bentoGrid}>
               <View style={[styles.kpiCard, styles.kpiCardDark, Shadows.heroDark]}>

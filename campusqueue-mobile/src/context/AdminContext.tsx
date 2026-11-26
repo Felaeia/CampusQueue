@@ -240,17 +240,63 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       setLiveError(null);
       try {
         const { startDate, endDate } = rangeToDates(range);
-        const [officesRes, staffRes, studentsRes, analyticsRes, logsRes] = await Promise.all([
-          liveAdminRequest<{ items: LiveOfficeDoc[] }>('resource=offices&limit=100'),
-          liveAdminRequest<{ items: LiveAccountDoc[] }>('resource=staff&archived=true&limit=100'),
-          liveAdminRequest<{ items: LiveAccountDoc[] }>('resource=students&archived=true&limit=100'),
-          liveAdminRequest<LiveAnalyticsResponse>(
-            `resource=analytics&startDate=${startDate}&endDate=${endDate}`
-          ),
-          liveAdminRequest<{ items: LiveActivityLogDoc[] }>(
-            `resource=activity-logs&startDate=${startDate}&endDate=${endDate}&limit=100`
-          ),
-        ]);
+        const [officesSettled, staffSettled, studentsSettled, analyticsSettled, logsSettled] =
+          await Promise.allSettled([
+            liveAdminRequest<{ items: LiveOfficeDoc[] }>('resource=offices&limit=100'),
+            liveAdminRequest<{ items: LiveAccountDoc[] }>('resource=staff&archived=true&limit=100'),
+            liveAdminRequest<{ items: LiveAccountDoc[] }>(
+              'resource=students&archived=true&limit=100'
+            ),
+            liveAdminRequest<LiveAnalyticsResponse>(
+              `resource=analytics&startDate=${startDate}&endDate=${endDate}`
+            ),
+            liveAdminRequest<{ items: LiveActivityLogDoc[] }>(
+              `resource=activity-logs&startDate=${startDate}&endDate=${endDate}&limit=100`
+            ),
+          ]);
+
+        const officesRes =
+          officesSettled.status === 'fulfilled' ? officesSettled.value : { items: [] };
+        const staffRes =
+          staffSettled.status === 'fulfilled' ? staffSettled.value : { items: [] };
+        const studentsRes =
+          studentsSettled.status === 'fulfilled' ? studentsSettled.value : { items: [] };
+        const analyticsRes: LiveAnalyticsResponse =
+          analyticsSettled.status === 'fulfilled'
+            ? analyticsSettled.value
+            : {
+                summary: {
+                  issued: 0,
+                  completed: 0,
+                  cancelled: 0,
+                  noShow: 0,
+                  legacySkipped: 0,
+                  waiting: 0,
+                  called: 0,
+                  serving: 0,
+                  averageWaitMinutes: null,
+                  averageServiceMinutes: null,
+                  completionRate: null,
+                  noShowRate: null,
+                },
+                groups: { office: [], date: [] },
+              };
+        const logsRes =
+          logsSettled.status === 'fulfilled' ? logsSettled.value : { items: [] };
+
+        const firstRejection = [
+          officesSettled,
+          staffSettled,
+          studentsSettled,
+          analyticsSettled,
+          logsSettled,
+        ].find((r) => r.status === 'rejected');
+        if (firstRejection && firstRejection.status === 'rejected') {
+          const reason = firstRejection.reason;
+          setLiveError(
+            reason instanceof Error ? reason.message : 'Some campus telemetry failed to sync.'
+          );
+        }
 
         // Hydrate counters + request-types per office
         const officeMetricsMap = new Map(
