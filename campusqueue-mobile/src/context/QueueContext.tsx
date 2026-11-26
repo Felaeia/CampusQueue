@@ -172,7 +172,7 @@ type MaybePromise<T> = T | Promise<T>;
 
 export interface QueueContextValue {
   liveEnabled: boolean;
-  liveRole: 'student' | 'registrar_staff' | null;
+  liveRole: 'student' | 'staff' | 'registrar_staff' | 'admin' | null;
   liveSignIn: (loginId: string, password: string) => Promise<{ role: string; name?: string }>;
   liveChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   liveVerify: (data: { qrPayload: string } | { ticketNumber: string; usnSuffix: string }) => Promise<VerifiedTicketData>;

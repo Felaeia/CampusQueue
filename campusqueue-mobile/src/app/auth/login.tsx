@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CampusQueueEmblem } from '../../components/CampusQueueEmblem';
 import { FirstLoginPasswordModal } from '../../components/login/FirstLoginPasswordModal';
 import { ForgotPasswordModal } from '../../components/login/ForgotPasswordModal';
+import { useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
@@ -32,6 +33,7 @@ export default function LoginScreen() {
 function LoginForm() {
   const router = useRouter();
   const passwordInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const { loginAdmin } = useAdmin();
   const {
     authDefaults,
     studentProfile,
@@ -71,7 +73,13 @@ function LoginForm() {
         const result = await liveSignIn(trimmedId, password);
         triggerHaptic('success');
         if (result.name) showToast(`Welcome back, ${result.name}!`, 'matcha');
-        router.replace(result.role === 'registrar_staff' ? '/staff/registrar' : '/student/home');
+        router.replace(
+          result.role === 'admin'
+            ? '/admin/dashboard'
+            : result.role === 'registrar_staff' || result.role === 'staff'
+              ? '/staff/registrar'
+              : '/student/home'
+        );
       } catch (error) {
         setErrorMsg(error instanceof Error ? error.message : 'Sign-in failed.');
         triggerHaptic('warning');
@@ -82,6 +90,14 @@ function LoginForm() {
     }
     setTimeout(() => {
       setIsLoading(false);
+
+      const adminResult = loginAdmin(trimmedId, password);
+      if (adminResult.ok && adminResult.admin) {
+        triggerHaptic('success');
+        showToast(`Welcome back, ${adminResult.admin.fullName}!`, 'matcha');
+        router.replace('/admin/dashboard');
+        return;
+      }
 
       const staffResult = loginStaff(trimmedId, password);
       if (staffResult.ok && staffResult.staff) {

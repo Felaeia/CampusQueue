@@ -5,7 +5,7 @@ import type { DeskStatus, ProcessedTransaction, StaffAccountRecord, StaffQueueTi
 export const liveEnabled = Boolean(process.env.EXPO_PUBLIC_CAMPUSQUEUE_API_URL);
 const base = process.env.EXPO_PUBLIC_CAMPUSQUEUE_API_URL?.replace(/\/$/, '');
 
-type Role = 'student' | 'registrar_staff';
+type Role = 'student' | 'staff' | 'registrar_staff' | 'admin';
 type Tokens = { idToken: string; refreshToken: string; expiresIn: string };
 type Session = { tokens: Tokens; expires: number; role: Role; staff?: StaffAccountRecord };
 type StudentState = { profile: StudentProfile; activeTickets: ActiveTicket[]; historyTickets: HistoryTicket[]; notifications: NotificationItem[] };
@@ -105,6 +105,9 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
         }
       }
       return { student: state };
+    }
+    if (session.role === 'admin') {
+      return {};
     }
     const state = await request<DeskState>(`registrar?counter=${encodeURIComponent(selectedCounter)}`, undefined, token);
     if (sessionRef.current === session && revision === latestLoad.current) setDesk(state);

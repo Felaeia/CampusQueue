@@ -22,6 +22,7 @@ import {
 } from '@expo-google-fonts/jetbrains-mono';
 
 import { QueueProvider } from '../context/QueueContext';
+import { AdminProvider } from '../context/AdminContext';
 import { ToastBanner } from '../components/ToastBanner';
 import { TurnCalledAlertModal } from '../components/TurnCalledAlertModal';
 import { Colors } from '../theme/tokens';
@@ -54,18 +55,20 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <QueueProvider>
-        <View style={styles.root}>
-          <StatusBar style="dark" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: Colors.canvas },
-              animation: 'fade',
-            }}
-          />
-          <ToastBanner />
-          <TurnCalledAlertModal />
-        </View>
+        <AdminProvider>
+          <View style={styles.root}>
+            <StatusBar style="dark" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.canvas },
+                animation: 'fade',
+              }}
+            />
+            <ToastBanner />
+            <TurnCalledAlertModal />
+          </View>
+        </AdminProvider>
       </QueueProvider>
     </SafeAreaProvider>
   );
