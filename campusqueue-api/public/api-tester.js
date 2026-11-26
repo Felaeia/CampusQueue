@@ -8,6 +8,7 @@ const query = byId("query");
 const token = byId("token");
 const body = byId("body");
 const send = byId("send");
+const simulate = byId("simulate");
 const status = byId("response-status");
 const responseCheck = byId("response-check");
 const output = byId("response-body");
@@ -116,7 +117,7 @@ function openRequest(item) {
 }
 
 function setPending(pending) {
-  for (const field of [query, token, body, send]) field.disabled = pending;
+  for (const field of [query, token, body, send, simulate]) field.disabled = pending;
   send.textContent = pending ? "Sending…" : "Send request";
 }
 
@@ -215,6 +216,14 @@ async function sendRequest(event) {
 
 search.addEventListener("input", renderCatalog);
 byId("request-form").addEventListener("submit", sendRequest);
+simulate.addEventListener("click", () => {
+  if (request) return;
+  resetResponse("Simulated 200 OK", "success");
+  responseCheck.textContent = "Sample response. No request was sent.";
+  responseCheck.hidden = false;
+  output.textContent = exampleText(endpoint.response);
+  output.hidden = false;
+});
 byId("close-dialog").addEventListener("click", () => dialog.close());
 dialog.addEventListener("close", () => {
   if (dialog.open) return;

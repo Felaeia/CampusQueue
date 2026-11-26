@@ -61,12 +61,15 @@
       </div>
       <div class="send-row">
         <p id="request-note" class="note"></p>
-        <button id="send" class="primary" type="submit">Send request</button>
+        <div class="request-actions">
+          <button id="simulate" class="secondary" type="button">Simulate success</button>
+          <button id="send" class="primary" type="submit">Send request</button>
+        </div>
       </div>
     </form>
     <section class="response" aria-labelledby="response-title">
       <div class="response-header">
-        <h3 id="response-title">Live response</h3>
+        <h3 id="response-title">Response</h3>
         <span id="response-status" role="status">Ready to send</span>
       </div>
       <p id="response-check" class="note" role="status" hidden></p>

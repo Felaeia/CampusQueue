@@ -57,6 +57,8 @@ The existing Expo staff screen uses the legacy Registrar route. The shared staff
 
 Open `/api-tester.html` on the backend origin, for example `http://localhost:3000/api-tester.html` with `vercel dev` running. Search for a route or action and select a preset to edit its query, JSON or CSV body, and bearer token. Each run checks the HTTP status and content type and displays the actual response alongside the example. Protected presets require a token for the indicated role. Queue and admin actions that change data also require records in the appropriate state. The page keeps tokens from successful sign-in, refresh, and password-change requests in memory for the current page.
 
+Select **Simulate success** to display a preset's sample HTTP 200 response without sending a request. The sign-in preset starts with the public demo student credentials. Select **Send request** to try them live on an environment with that demo account provisioned and enabled.
+
 Send JSON with `Content-Type: application/json` for POST requests. Protected routes also require `Authorization: Bearer <idToken>` with the token returned by sign-in or refresh. Successful requests return HTTP `200` with JSON.
 
 ### Sign-in and shared routes

@@ -1,8 +1,11 @@
 const session = {
-  idToken: "<Firebase ID token>",
-  refreshToken: "<refresh token>",
+  idToken: "sample-id-token",
+  refreshToken: "sample-refresh-token",
   expiresIn: "3600",
 };
+
+// Public demo student fixture from campusqueue-mobile/src/data/mockData.json.
+const demoSignIn = { action: "sign-in", loginId: "23000440130", password: "student123" };
 
 const desk = {
   counter: "Window 2",
@@ -120,9 +123,9 @@ export const groups = [
       },
       {
         method: "POST", path: "/api/auth", access: "Public", name: "Sign in",
-        body: { action: "sign-in", loginId: "<USN or staff ID>", password: "<password>" },
+        body: demoSignIn,
         response: { ...session, role: "student" },
-        responseNote: "Staff sign-in also returns a staff profile.",
+        responseNote: "The request starts with the public demo student credentials. Live sign-in requires the demo account to be enabled on this backend.",
         sessionResponse: true,
       },
       {
@@ -144,12 +147,28 @@ export const groups = [
     endpoints: [
       {
         method: "GET", path: "/api/offices", access: "Signed in", name: "List offices",
-        response: { offices: [], nextCursor: null },
+        response: {
+          offices: [{
+            id: "registrar", name: "Registrar", acceptingTickets: true, nowServing: "REG-003", waitingCount: 1,
+            services: [{ id: "reg-tor", name: "TOR Request", duration: 15, docs: [] }],
+          }],
+          nextCursor: null,
+        },
+        responseNote: "Each office may include additional settings and service details.",
       },
       ...[
         {
           method: "GET", name: "Read student dashboard",
-          response: { profile: { fullName: "Example Student" }, activeTickets: [], historyTickets: [], notifications: [] },
+          response: {
+            profile: { fullName: "Example Student", usn: demoSignIn.loginId },
+            activeTickets: [{
+              id: "sample-ticket-004", ticketNumber: "REG-004", officeId: "registrar", service: "TOR Request",
+              status: "waiting", lifecycleStatus: "waiting", aheadCount: 1, estWaitMins: 30,
+            }],
+            historyTickets: [],
+            notifications: [],
+          },
+          responseNote: "The ticket object includes additional fields.",
         },
         action("Issue a ticket", "issue", { officeId: "registrar", serviceId: "reg-tor", requestId: "<unique request ID>" },
           { ticket: { id: ticketId, ticketNumber: "REG-001", status: "waiting" } }, "The ticket object includes additional fields."),
