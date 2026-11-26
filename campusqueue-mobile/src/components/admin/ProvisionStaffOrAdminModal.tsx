@@ -20,7 +20,7 @@ interface ProvisionStaffOrAdminModalProps {
   offices: AdminOfficeRecord[];
   existingUsers: AdminUserRecord[];
   onClose: () => void;
-  onProvision: (input: ProvisionUserInput) => { ok: boolean; error?: string };
+  onProvision: (input: ProvisionUserInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
 function suggestNextId(role: 'staff' | 'admin', existingUsers: AdminUserRecord[]): string {
@@ -66,8 +66,8 @@ export function ProvisionStaffOrAdminModal({
     setErrorMsg('');
   };
 
-  const handleSubmit = () => {
-    const res = onProvision({
+  const handleSubmit = async () => {
+    const res = await onProvision({
       role,
       identifier,
       fullName,

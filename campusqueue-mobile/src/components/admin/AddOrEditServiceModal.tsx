@@ -21,7 +21,7 @@ interface AddOrEditServiceModalProps {
   parentOfficeName: string;
   editingService: AdminServiceItem | null;
   onClose: () => void;
-  onSave: (input: SaveServiceInput) => { ok: boolean; error?: string };
+  onSave: (input: SaveServiceInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
 export function AddOrEditServiceModal({
@@ -47,9 +47,9 @@ export function AddOrEditServiceModal({
     }
   }, [editingService, visible]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const duration = parseInt(durationText.trim(), 10);
-    const res = onSave({
+    const res = await onSave({
       id: editingService?.id,
       name: serviceName,
       estimatedDurationMinutes: Number.isFinite(duration) ? duration : 0,

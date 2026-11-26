@@ -19,7 +19,7 @@ interface AddOrEditOfficeModalProps {
   visible: boolean;
   editingOffice: AdminOfficeRecord | null;
   onClose: () => void;
-  onSave: (input: SaveOfficeInput) => { ok: boolean; error?: string };
+  onSave: (input: SaveOfficeInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
 export function AddOrEditOfficeModal({
@@ -48,7 +48,7 @@ export function AddOrEditOfficeModal({
     }
   }, [editingOffice, visible]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const parsedCap = dailyCapacityLimit.trim()
       ? parseInt(dailyCapacityLimit.trim(), 10)
       : undefined;
@@ -57,7 +57,7 @@ export function AddOrEditOfficeModal({
       return;
     }
 
-    const res = onSave({
+    const res = await onSave({
       id: editingOffice?.id,
       name: officeName,
       prefix: ticketPrefix,

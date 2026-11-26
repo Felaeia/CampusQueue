@@ -219,5 +219,40 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
       const { result } = await mutate<{ ticket: VerifiedTicketData }>('registrar', { action: 'verify', counter, ...data });
       return result.ticket;
     },
+    adminRequest: async <T,>(query: string, data?: object, method?: 'GET' | 'POST' | 'PATCH'): Promise<T> => {
+      const session = sessionRef.current;
+      if (!session) throw new Error('Sign in to continue.');
+      const token = await authorize(session);
+      const httpMethod = method ?? (data ? 'POST' : 'GET');
+      const response = await fetch(`${base}/api/admin?${query}`, {
+        method: httpMethod,
+        headers: {
+          ...(data ? { 'Content-Type': 'application/json' } : {}),
+          Authorization: `Bearer ${token}`,
+        },
+        body: data ? JSON.stringify(data) : undefined,
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        if ([401, 403].includes(response.status) && sessionRef.current === session) signOut();
+        throw new ApiResponseError(result?.error ?? `Admin request failed (${response.status}).`, response.status);
+      }
+      return result as T;
+    },
+    adminDownload: async (query: string): Promise<string> => {
+      const session = sessionRef.current;
+      if (!session) throw new Error('Sign in to continue.');
+      const token = await authorize(session);
+      const response = await fetch(`${base}/api/admin?${query}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        if ([401, 403].includes(response.status) && sessionRef.current === session) signOut();
+        throw new ApiResponseError(text || `Report download failed (${response.status}).`, response.status);
+      }
+      return text;
+    },
   };
 }

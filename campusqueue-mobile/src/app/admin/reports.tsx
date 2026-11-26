@@ -46,8 +46,8 @@ function formatAvgDuration(totalSeconds: number, count: number): string {
  * Screen 4.4: System Audit Trail & Daily Transaction Records (/admin/reports)
  */
 export default function AdminReportsScreen() {
-  const { auditRecords } = useAdmin();
-  const { showToast, triggerHaptic } = useQueue();
+  const { auditRecords, downloadAnalyticsReport } = useAdmin();
+  const { liveEnabled, showToast, triggerHaptic } = useQueue();
 
   const [startDate, setStartDate] = useState('2026-11-26');
   const [endDate, setEndDate] = useState('2026-11-26');
@@ -382,6 +382,11 @@ export default function AdminReportsScreen() {
         records={filteredRecords}
         filterSummary={filterSummary}
         onClose={() => setShowExportModal(false)}
+        onLiveDownload={
+          liveEnabled
+            ? (fmt) => downloadAnalyticsReport(startDate, endDate, fmt, officeFilter)
+            : undefined
+        }
         onExported={(count) => {
           triggerHaptic('success');
           showToast(`Master transaction report exported (${count} records).`, 'matcha');

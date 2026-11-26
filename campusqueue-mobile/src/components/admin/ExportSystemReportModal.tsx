@@ -11,6 +11,7 @@ interface ExportSystemReportModalProps {
   filterSummary: string;
   onClose: () => void;
   onExported: (recordCount: number) => void;
+  onLiveDownload?: (format: 'csv' | 'pdf') => Promise<string | null>;
 }
 
 export function ExportSystemReportModal({
@@ -19,11 +20,16 @@ export function ExportSystemReportModal({
   filterSummary,
   onClose,
   onExported,
+  onLiveDownload,
 }: ExportSystemReportModalProps) {
   const [format, setFormat] = useState<'CSV' | 'PDF'>('CSV');
   const [includeAuditColumns, setIncludeAuditColumns] = useState(true);
 
   const handleDownloadAndShare = async () => {
+    const livePayload = onLiveDownload
+      ? await onLiveDownload(format.toLowerCase() as 'csv' | 'pdf').catch(() => null)
+      : null;
+
     const header = includeAuditColumns
       ? 'Ticket,DateTime,Office,Service,StudentUSN,Outcome,Wait,ServiceTime,HandledBy'
       : 'Ticket,DateTime,Office,Service,Outcome,Wait,ServiceTime';
@@ -35,7 +41,8 @@ export function ExportSystemReportModal({
     );
 
     const payload =
-      format === 'CSV'
+      livePayload ??
+      (format === 'CSV'
         ? [header, ...rows].join('\n')
         : [
             'CampusQueue Master Transaction Report (PDF Executive Summary)',
@@ -44,7 +51,7 @@ export function ExportSystemReportModal({
             `Audit Columns Included: ${includeAuditColumns ? 'Yes' : 'No'}`,
             '',
             ...rows.slice(0, 15),
-          ].join('\n');
+          ].join('\n'));
 
     onClose();
     try {

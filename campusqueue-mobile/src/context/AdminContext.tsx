@@ -2,6 +2,7 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -15,6 +16,8 @@ import {
   AdminDateRange,
   AdminKpiSnapshot,
   AdminOfficeRecord,
+  AdminOfficeWindow,
+  AdminServiceItem,
   AdminUserRecord,
   ProvisionUserInput,
   SaveOfficeInput,
@@ -41,6 +44,110 @@ function cloneAuditRecords(): AdminAuditRecord[] {
   return adminSeed.auditRecords.map((r) => ({ ...r }));
 }
 
+function manilaDateString(offsetDays = 0): string {
+  const manilaMs = Date.now() + 8 * 60 * 60 * 1000 + offsetDays * 86_400_000;
+  return new Date(manilaMs).toISOString().slice(0, 10);
+}
+
+function rangeToDates(range: AdminDateRange): { startDate: string; endDate: string } {
+  const today = manilaDateString(0);
+  if (range === 'Yesterday') {
+    const y = manilaDateString(-1);
+    return { startDate: y, endDate: y };
+  }
+  if (range === 'Last 7 Days') {
+    return { startDate: manilaDateString(-6), endDate: today };
+  }
+  if (range === 'This Month') {
+    return { startDate: `${today.slice(0, 8)}01`, endDate: today };
+  }
+  return { startDate: today, endDate: today };
+}
+
+function formatSec(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  const m = String(Math.floor(safe / 60)).padStart(2, '0');
+  const s = String(safe % 60).padStart(2, '0');
+  return `${m}m ${s}s`;
+}
+
+// Live API response shapes
+interface LiveOfficeDoc {
+  id: string;
+  name?: string;
+  shortLabel?: string;
+  prefix?: string;
+  description?: string;
+  acceptingTickets?: boolean;
+  waitingCount?: number;
+  lastIssuedNumber?: number;
+  themeColor?: string;
+  services?: { id: string; name: string; duration?: number; docs?: string; available?: boolean }[];
+}
+
+interface LiveCounterDoc {
+  id: string;
+  name?: string;
+  status?: 'online' | 'break' | 'closed';
+  staffName?: string;
+  staffId?: string;
+}
+
+interface LiveAccountDoc {
+  id: string;
+  loginId?: string;
+  staffId?: string;
+  usn?: string;
+  fullName?: string;
+  staffName?: string;
+  email?: string;
+  role?: string;
+  accountStatus?: string;
+  archivedAt?: unknown;
+  officeId?: string;
+  office?: string;
+  defaultCounterWindow?: string;
+  program?: string;
+  yearLevel?: string;
+}
+
+interface LiveAnalyticsResponse {
+  summary: {
+    issued: number;
+    completed: number;
+    cancelled: number;
+    noShow: number;
+    legacySkipped: number;
+    waiting: number;
+    called: number;
+    serving: number;
+    averageWaitMinutes: number | null;
+    averageServiceMinutes: number | null;
+    completionRate: number | null;
+    noShowRate: number | null;
+  };
+  groups: {
+    office: {
+      id: string;
+      label: string;
+      waiting: number;
+      averageWaitMinutes: number | null;
+    }[];
+    date: { id: string; label: string; issued: number }[];
+  };
+}
+
+interface LiveActivityLogDoc {
+  id: string;
+  createdAt: string;
+  action?: string;
+  actorId?: string;
+  officeId?: string;
+  targetId?: string;
+  ticketId?: string;
+  details?: Record<string, unknown>;
+}
+
 export interface AdminLoginResult {
   ok: boolean;
   admin?: AdminAccount;
@@ -51,50 +158,272 @@ export interface ActionResult {
   error?: string;
 }
 
+export type MaybePromise<T> = T | Promise<T>;
+
 export interface AdminContextValue {
   activeAdmin: AdminAccount;
   isAdminAuthenticated: boolean;
+  isLoadingLive: boolean;
+  liveError: string | null;
   loginAdmin: (adminId: string, password: string) => AdminLoginResult;
   logoutAdmin: () => void;
+  refreshAdminData: (range?: AdminDateRange) => Promise<void>;
 
   // Overview & Broadcasts
   getKpiSnapshot: (range: AdminDateRange) => AdminKpiSnapshot;
   broadcasts: AdminBroadcastRecord[];
-  sendBroadcast: (input: SendBroadcastInput) => { ok: boolean; recipientCount: number; error?: string };
+  sendBroadcast: (
+    input: SendBroadcastInput
+  ) => { ok: boolean; recipientCount: number; error?: string };
 
   // Offices & Services
   offices: AdminOfficeRecord[];
-  toggleOfficeStatus: (officeId: string) => void;
-  toggleServiceStatus: (officeId: string, serviceId: string) => void;
-  saveOffice: (input: SaveOfficeInput) => ActionResult;
-  saveService: (officeId: string, input: SaveServiceInput) => ActionResult;
+  toggleOfficeStatus: (officeId: string) => MaybePromise<void>;
+  toggleServiceStatus: (officeId: string, serviceId: string) => MaybePromise<void>;
+  saveOffice: (input: SaveOfficeInput) => MaybePromise<ActionResult>;
+  saveService: (officeId: string, input: SaveServiceInput) => MaybePromise<ActionResult>;
   resetOfficeSequence: (officeId: string) => ActionResult;
 
   // Users & Roles
   users: AdminUserRecord[];
   directoryTotalBadges: { staff: number; students: number; admins: number };
-  provisionUser: (input: ProvisionUserInput) => ActionResult;
-  updateStaffAssignment: (userId: string, officeId: string, defaultWindow: string) => ActionResult;
-  resetUserPassword: (userId: string) => ActionResult;
-  toggleAccountStatus: (userId: string) => ActionResult;
+  provisionUser: (input: ProvisionUserInput) => MaybePromise<ActionResult>;
+  updateStaffAssignment: (
+    userId: string,
+    officeId: string,
+    defaultWindow: string
+  ) => MaybePromise<ActionResult>;
+  resetUserPassword: (userId: string) => MaybePromise<ActionResult>;
+  toggleAccountStatus: (userId: string) => MaybePromise<ActionResult>;
 
   // Audit Reports
   auditRecords: AdminAuditRecord[];
+  downloadAnalyticsReport: (
+    startDate: string,
+    endDate: string,
+    format: 'csv' | 'pdf',
+    officeId?: string
+  ) => Promise<string | null>;
 }
 
 const AdminContext = createContext<AdminContextValue | null>(null);
 
 export function AdminProvider({ children }: { children: React.ReactNode }) {
-  const { showToast, triggerHaptic } = useQueue();
+  const {
+    liveEnabled,
+    liveRole,
+    liveAdminRequest,
+    liveAdminDownload,
+    showToast,
+    triggerHaptic,
+  } = useQueue();
 
   const [activeAdmin, setActiveAdmin] = useState<AdminAccount>(
     () => ({ ...adminSeed.adminAccounts[0] })
   );
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [isLoadingLive, setIsLoadingLive] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+
   const [offices, setOffices] = useState<AdminOfficeRecord[]>(() => cloneOffices());
   const [users, setUsers] = useState<AdminUserRecord[]>(() => cloneUsers());
   const [broadcasts, setBroadcasts] = useState<AdminBroadcastRecord[]>([]);
-  const [auditRecords] = useState<AdminAuditRecord[]>(() => cloneAuditRecords());
+  const [auditRecords, setAuditRecords] = useState<AdminAuditRecord[]>(() => cloneAuditRecords());
+  const [liveKpis, setLiveKpis] = useState<Partial<Record<AdminDateRange, AdminKpiSnapshot>>>({});
+
+  const isLiveAdmin = liveEnabled && liveRole === 'admin';
+
+  const refreshAdminData = useCallback(
+    async (range: AdminDateRange = 'Today (Live)') => {
+      if (!isLiveAdmin) return;
+      setIsLoadingLive(true);
+      setLiveError(null);
+      try {
+        const { startDate, endDate } = rangeToDates(range);
+        const [officesRes, staffRes, studentsRes, analyticsRes, logsRes] = await Promise.all([
+          liveAdminRequest<{ items: LiveOfficeDoc[] }>('resource=offices&limit=100'),
+          liveAdminRequest<{ items: LiveAccountDoc[] }>('resource=staff&archived=true&limit=100'),
+          liveAdminRequest<{ items: LiveAccountDoc[] }>('resource=students&archived=true&limit=100'),
+          liveAdminRequest<LiveAnalyticsResponse>(
+            `resource=analytics&startDate=${startDate}&endDate=${endDate}`
+          ),
+          liveAdminRequest<{ items: LiveActivityLogDoc[] }>(
+            `resource=activity-logs&startDate=${startDate}&endDate=${endDate}&limit=100`
+          ),
+        ]);
+
+        // Hydrate counters + request-types per office
+        const officeMetricsMap = new Map(
+          analyticsRes.groups.office.map((g) => [g.id, g])
+        );
+
+        const hydratedOffices: AdminOfficeRecord[] = await Promise.all(
+          officesRes.items.map(async (o) => {
+            const [countersRes, servicesRes] = await Promise.all([
+              liveAdminRequest<{ items: LiveCounterDoc[] }>(
+                `resource=counters&officeId=${encodeURIComponent(o.id)}&limit=100`
+              ).catch(() => ({ items: [] as LiveCounterDoc[] })),
+              liveAdminRequest<{
+                items: {
+                  id: string;
+                  name: string;
+                  duration?: number;
+                  docs?: string;
+                  available?: boolean;
+                }[];
+              }>(`resource=request-types&officeId=${encodeURIComponent(o.id)}&limit=100`).catch(
+                () => ({ items: o.services ?? [] })
+              ),
+            ]);
+
+            const windows: AdminOfficeWindow[] = countersRes.items.map((c) => ({
+              label: c.name || c.id,
+              status:
+                c.status === 'online' ? 'Online' : c.status === 'break' ? 'Break' : 'Closed',
+              staffName: c.staffName,
+              staffId: c.staffId,
+            }));
+
+            const services: AdminServiceItem[] = (
+              servicesRes.items.length ? servicesRes.items : (o.services ?? [])
+            ).map((s) => ({
+              id: s.id,
+              name: s.name,
+              estimatedDurationMinutes: s.duration ?? 10,
+              requiredDocumentsNote: s.docs ?? '',
+              isActive: s.available !== false,
+              waitingCount: 0,
+            }));
+
+            const officeMetric = officeMetricsMap.get(o.id);
+
+            return {
+              id: o.id,
+              name: o.name || o.id,
+              shortLabel: o.shortLabel || (o.name || o.id).replace(' Office', ''),
+              prefix: (o.prefix || o.id.slice(0, 1)).toUpperCase(),
+              status: o.acceptingTickets === false ? 'closed' : 'open',
+              operatingHours: '08:00 AM – 05:00 PM',
+              locationDescription: o.description || 'Main Campus Building',
+              windowCount: Math.max(1, windows.length),
+              lastIssuedNumber: o.lastIssuedNumber ?? 0,
+              activeWaitingCount: o.waitingCount ?? officeMetric?.waiting ?? 0,
+              avgWaitMinutes: Math.round(officeMetric?.averageWaitMinutes ?? 0),
+              themeColor: o.themeColor || '#0E8AA8',
+              windows,
+              services,
+            };
+          })
+        );
+
+        const officeNameById = new Map(hydratedOffices.map((o) => [o.id, o.name]));
+
+        const mapAccount = (doc: LiveAccountDoc, fallbackRole: 'staff' | 'student'): AdminUserRecord => {
+          const isSuspended = doc.accountStatus === 'archived' || Boolean(doc.archivedAt);
+          return {
+            id: doc.id,
+            identifier: doc.loginId || doc.staffId || doc.usn || doc.id,
+            fullName: doc.fullName || doc.staffName || 'Unnamed Account',
+            email: doc.email || '—',
+            role: fallbackRole,
+            status: isSuspended ? 'suspended' : 'active',
+            assignedOfficeId: doc.officeId,
+            assignedOfficeName: doc.office || (doc.officeId ? officeNameById.get(doc.officeId) : undefined),
+            defaultWindow: doc.defaultCounterWindow,
+            courseYear:
+              doc.program || doc.yearLevel
+                ? [doc.program, doc.yearLevel].filter(Boolean).join(' - ')
+                : undefined,
+            mustChangePassword: false,
+          };
+        };
+
+        const mappedUsers: AdminUserRecord[] = [
+          ...staffRes.items.map((d) => mapAccount(d, 'staff')),
+          ...studentsRes.items.map((d) => mapAccount(d, 'student')),
+        ];
+
+        const s = analyticsRes.summary;
+        const skippedTotal = s.noShow + s.legacySkipped;
+        const peakHours =
+          analyticsRes.groups.date.length > 0
+            ? analyticsRes.groups.date.slice(0, 10).map((d) => ({
+                hourLabel: d.label.slice(5),
+                count: d.issued,
+              }))
+            : adminSeed.kpisByRange[range].peakHours.map((b) => ({ ...b, count: 0 }));
+
+        const liveSnapshot: AdminKpiSnapshot = {
+          totalIssued: s.issued,
+          issuedDeltaLabel: `${startDate} to ${endDate}`,
+          completedCount: s.completed,
+          completionRate: s.completionRate ?? 0,
+          activeWaiting: s.waiting + s.called + s.serving,
+          skippedCount: skippedTotal,
+          skippedRate: s.noShowRate ?? 0,
+          peakHours,
+        };
+
+        const mappedLogs: AdminAuditRecord[] = logsRes.items.map((log) => {
+          const created = new Date(log.createdAt);
+          const dateKey = log.createdAt.slice(0, 10);
+          const timeLabel = Number.isFinite(created.valueOf())
+            ? created.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+            : log.createdAt;
+          const actionText = (log.action || 'event').toLowerCase();
+          const outcome = actionText.includes('cancel')
+            ? 'Cancelled'
+            : actionText.includes('skip') || actionText.includes('no_show')
+              ? 'Skipped'
+              : 'Completed';
+
+          return {
+            id: log.id,
+            documentId: `activityLogs/${log.id}`,
+            ticketCode: log.ticketId || log.targetId || log.id.slice(0, 8),
+            dateKey,
+            dateTimeLabel: `${dateKey} • ${timeLabel}`,
+            officeId: log.officeId || 'campus',
+            officeName: (log.officeId && officeNameById.get(log.officeId)) || log.officeId || 'Campus-Wide',
+            serviceName: log.action || 'System Event',
+            studentName: String(log.details?.studentName ?? log.targetId ?? '—'),
+            studentUsn: String(log.details?.usn ?? log.targetId ?? '—'),
+            outcome,
+            issuedAt: timeLabel,
+            approachingAlertAt: '—',
+            calledAt: '—',
+            qrVerifiedAt: '—',
+            closedAt: timeLabel,
+            waitDurationSeconds: 0,
+            serviceDurationSeconds: 0,
+            waitDurationLabel: formatSec(0),
+            serviceDurationLabel: formatSec(0),
+            verificationMethod: 'Manual',
+            handledByStaffId: log.actorId || 'system',
+            handledByStaffName: log.actorId || 'System',
+            counterWindow: String(log.details?.counter ?? '—'),
+          };
+        });
+
+        setOffices(hydratedOffices);
+        setUsers(mappedUsers);
+        setAuditRecords(mappedLogs);
+        setLiveKpis((prev) => ({ ...prev, [range]: liveSnapshot }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unable to sync campus telemetry.';
+        setLiveError(msg);
+      } finally {
+        setIsLoadingLive(false);
+      }
+    },
+    [isLiveAdmin, liveAdminRequest]
+  );
+
+  useEffect(() => {
+    if (isLiveAdmin) {
+      void refreshAdminData('Today (Live)');
+    }
+  }, [isLiveAdmin, refreshAdminData]);
 
   const loginAdmin = useCallback((adminId: string, password: string): AdminLoginResult => {
     const cleanId = adminId.trim().toUpperCase();
@@ -121,13 +450,16 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
 
   const getKpiSnapshot = useCallback(
     (range: AdminDateRange): AdminKpiSnapshot => {
+      if (isLiveAdmin && liveKpis[range]) {
+        return liveKpis[range]!;
+      }
       const base = adminSeed.kpisByRange[range];
       return {
         ...base,
         activeWaiting: range === 'Yesterday' ? 0 : liveWaitingSum,
       };
     },
-    [liveWaitingSum]
+    [isLiveAdmin, liveKpis, liveWaitingSum]
   );
 
   const sendBroadcast = useCallback(
@@ -182,28 +514,63 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   );
 
   const toggleOfficeStatus = useCallback(
-    (officeId: string) => {
-      let updatedName = '';
+    async (officeId: string) => {
+      const target = offices.find((o) => o.id === officeId);
+      if (!target) return;
+      const nextAccepting = target.status !== 'open';
+
+      if (isLiveAdmin) {
+        try {
+          await liveAdminRequest('resource=offices', {
+            action: 'update',
+            id: officeId,
+            acceptingTickets: nextAccepting,
+          });
+          setOffices((prev) =>
+            prev.map((o) =>
+              o.id === officeId ? { ...o, status: nextAccepting ? 'open' : 'closed' } : o
+            )
+          );
+          triggerHaptic('light');
+          showToast(`${target.shortLabel} queue status updated.`, 'matcha');
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Failed to update office.', 'warning');
+        }
+        return;
+      }
+
       setOffices((prev) =>
-        prev.map((o) => {
-          if (o.id !== officeId) return o;
-          updatedName = o.shortLabel || o.name;
-          return {
-            ...o,
-            status: o.status === 'open' ? 'closed' : 'open',
-          };
-        })
+        prev.map((o) =>
+          o.id === officeId ? { ...o, status: nextAccepting ? 'open' : 'closed' } : o
+        )
       );
       triggerHaptic('light');
-      if (updatedName) {
-        showToast(`${updatedName} queue status updated.`, 'matcha');
-      }
+      showToast(`${target.shortLabel} queue status updated.`, 'matcha');
     },
-    [showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, offices, showToast, triggerHaptic]
   );
 
   const toggleServiceStatus = useCallback(
-    (officeId: string, serviceId: string) => {
+    async (officeId: string, serviceId: string) => {
+      const office = offices.find((o) => o.id === officeId);
+      const service = office?.services.find((s) => s.id === serviceId);
+      if (!service) return;
+      const nextAvailable = !service.isActive;
+
+      if (isLiveAdmin) {
+        try {
+          await liveAdminRequest('resource=request-types', {
+            action: 'update',
+            officeId,
+            id: serviceId,
+            available: nextAvailable,
+          });
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Failed to update service.', 'warning');
+          return;
+        }
+      }
+
       setOffices((prev) =>
         prev.map((o) =>
           o.id !== officeId
@@ -211,7 +578,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             : {
                 ...o,
                 services: o.services.map((s) =>
-                  s.id === serviceId ? { ...s, isActive: !s.isActive } : s
+                  s.id === serviceId ? { ...s, isActive: nextAvailable } : s
                 ),
               }
         )
@@ -219,16 +586,14 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       triggerHaptic('light');
       showToast('Service catalog updated.', 'dark');
     },
-    [showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, offices, showToast, triggerHaptic]
   );
 
   const saveOffice = useCallback(
-    (input: SaveOfficeInput): ActionResult => {
+    async (input: SaveOfficeInput): Promise<ActionResult> => {
       const cleanName = input.name.trim();
       const cleanPrefix = input.prefix.trim().toUpperCase();
-      if (!cleanName) {
-        return { ok: false, error: 'Office name is required.' };
-      }
+      if (!cleanName) return { ok: false, error: 'Office name is required.' };
       if (!/^[A-Z]{1,2}$/.test(cleanPrefix)) {
         return { ok: false, error: 'Ticket prefix must be 1–2 uppercase letters (e.g., R or AC).' };
       }
@@ -237,6 +602,42 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       );
       if (duplicate) {
         return { ok: false, error: `Prefix "${cleanPrefix}" is already used by ${duplicate.name}.` };
+      }
+
+      const slug = cleanName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+      const officeId = input.id ?? `${slug || 'office'}-${Date.now().toString(36)}`;
+
+      if (isLiveAdmin) {
+        try {
+          if (input.id) {
+            await liveAdminRequest('resource=offices', {
+              action: 'update',
+              id: officeId,
+              name: cleanName,
+              shortLabel: cleanName.replace(' Office', ''),
+              description: input.locationDescription.trim(),
+            });
+          } else {
+            await liveAdminRequest('resource=offices', {
+              action: 'create',
+              id: officeId,
+              name: cleanName,
+              shortLabel: cleanName.replace(' Office', ''),
+              prefix: cleanPrefix,
+              description: input.locationDescription.trim(),
+              acceptingTickets: true,
+            });
+          }
+          await refreshAdminData();
+          triggerHaptic('success');
+          showToast('Campus office saved.', 'matcha');
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : 'Failed to save office.' };
+        }
       }
 
       if (input.id) {
@@ -260,12 +661,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           })
         );
       } else {
-        const slug = cleanName
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/(^-|-$)/g, '');
         const newOffice: AdminOfficeRecord = {
-          id: `${slug || 'office'}-${Date.now().toString(36)}`,
+          id: officeId,
           name: cleanName,
           shortLabel: cleanName.replace(' Office', ''),
           prefix: cleanPrefix,
@@ -291,17 +688,42 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       showToast('Campus office saved.', 'matcha');
       return { ok: true };
     },
-    [offices, showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const saveService = useCallback(
-    (officeId: string, input: SaveServiceInput): ActionResult => {
+    async (officeId: string, input: SaveServiceInput): Promise<ActionResult> => {
       const cleanName = input.name.trim();
-      if (!cleanName) {
-        return { ok: false, error: 'Service name is required.' };
-      }
+      if (!cleanName) return { ok: false, error: 'Service name is required.' };
       if (!Number.isFinite(input.estimatedDurationMinutes) || input.estimatedDurationMinutes < 1) {
         return { ok: false, error: 'Estimated duration must be at least 1 minute.' };
+      }
+
+      const serviceId =
+        input.id ??
+        `${officeId}-${cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}-${Date.now().toString(36).slice(-4)}`;
+
+      if (isLiveAdmin) {
+        try {
+          await liveAdminRequest('resource=request-types', {
+            action: input.id ? 'update' : 'create',
+            officeId,
+            id: serviceId,
+            name: cleanName,
+            duration: input.estimatedDurationMinutes,
+            docs: input.requiredDocumentsNote.trim(),
+            available: input.isActive,
+          });
+          await refreshAdminData();
+          triggerHaptic('success');
+          showToast('Service catalog updated.', 'matcha');
+          return { ok: true };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : 'Failed to save service.',
+          };
+        }
       }
 
       setOffices((prev) =>
@@ -323,15 +745,20 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
               ),
             };
           }
-          const newService = {
-            id: `srv-${Date.now().toString(36)}`,
-            name: cleanName,
-            estimatedDurationMinutes: input.estimatedDurationMinutes,
-            requiredDocumentsNote: input.requiredDocumentsNote.trim(),
-            isActive: input.isActive,
-            waitingCount: 0,
+          return {
+            ...o,
+            services: [
+              ...o.services,
+              {
+                id: serviceId,
+                name: cleanName,
+                estimatedDurationMinutes: input.estimatedDurationMinutes,
+                requiredDocumentsNote: input.requiredDocumentsNote.trim(),
+                isActive: input.isActive,
+                waitingCount: 0,
+              },
+            ],
           };
-          return { ...o, services: [...o.services, newService] };
         })
       );
 
@@ -339,7 +766,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       showToast('Service catalog updated.', 'matcha');
       return { ok: true };
     },
-    [showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, refreshAdminData, showToast, triggerHaptic]
   );
 
   const resetOfficeSequence = useCallback(
@@ -365,7 +792,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   );
 
   const provisionUser = useCallback(
-    (input: ProvisionUserInput): ActionResult => {
+    async (input: ProvisionUserInput): Promise<ActionResult> => {
       const cleanId = input.identifier.trim().toUpperCase();
       const cleanName = input.fullName.trim();
       const cleanEmail = input.email.trim().toLowerCase();
@@ -394,6 +821,35 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         assignedOfficeName = office.name;
       }
 
+      if (isLiveAdmin) {
+        if (input.role === 'admin') {
+          return {
+            ok: false,
+            error: 'Admin accounts must be provisioned using the backend CLI provisioning script.',
+          };
+        }
+        try {
+          await liveAdminRequest('resource=staff', {
+            action: 'create',
+            loginId: cleanId,
+            fullName: cleanName,
+            password: 'staff123',
+            email: cleanEmail,
+            officeId: input.assignedOfficeId,
+            counterIds: ['Window 1'],
+          });
+          await refreshAdminData();
+          triggerHaptic('success');
+          showToast(`Account ${cleanId} provisioned successfully.`, 'matcha');
+          return { ok: true };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : 'Failed to provision account.',
+          };
+        }
+      }
+
       const newUser: AdminUserRecord = {
         id: `u-${input.role}-${Date.now().toString(36)}`,
         identifier: cleanId,
@@ -412,13 +868,33 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       showToast(`Account ${cleanId} provisioned successfully.`, 'matcha');
       return { ok: true };
     },
-    [offices, showToast, triggerHaptic, users]
+    [isLiveAdmin, liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic, users]
   );
 
   const updateStaffAssignment = useCallback(
-    (userId: string, officeId: string, defaultWindow: string): ActionResult => {
+    async (userId: string, officeId: string, defaultWindow: string): Promise<ActionResult> => {
       const office = offices.find((o) => o.id === officeId);
       if (!office) return { ok: false, error: 'Selected office not found.' };
+
+      if (isLiveAdmin) {
+        try {
+          await liveAdminRequest('resource=staff', {
+            action: 'update',
+            id: userId,
+            officeId,
+            counterIds: [defaultWindow],
+            defaultCounterWindow: defaultWindow,
+          });
+          await refreshAdminData();
+          triggerHaptic('success');
+          showToast('Staff office assignment updated.', 'matcha');
+          return { ok: true };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Failed to update assignment.';
+          showToast(msg, 'warning');
+          return { ok: false, error: msg };
+        }
+      }
 
       setUsers((prev) =>
         prev.map((u) =>
@@ -436,11 +912,37 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       showToast('Staff office assignment updated.', 'matcha');
       return { ok: true };
     },
-    [offices, showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const resetUserPassword = useCallback(
-    (userId: string): ActionResult => {
+    async (userId: string): Promise<ActionResult> => {
+      const target = users.find((u) => u.id === userId);
+      if (!target) return { ok: false, error: 'User not found.' };
+
+      if (isLiveAdmin) {
+        if (target.role === 'admin') {
+          showToast('Admin passwords must be reset via backend CLI.', 'warning');
+          return { ok: false, error: 'Admin passwords must be reset via backend CLI.' };
+        }
+        try {
+          const resource = target.role === 'staff' ? 'staff' : 'students';
+          const defaultPwd = target.role === 'staff' ? 'staff123' : 'student123';
+          await liveAdminRequest(`resource=${resource}`, {
+            action: 'reset-password',
+            id: userId,
+            password: defaultPwd,
+          });
+          triggerHaptic('success');
+          showToast('Password reset to default.', 'matcha');
+          return { ok: true };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Failed to reset password.';
+          showToast(msg, 'warning');
+          return { ok: false, error: msg };
+        }
+      }
+
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, mustChangePassword: true } : u))
       );
@@ -448,11 +950,34 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       showToast('Password reset to default.', 'matcha');
       return { ok: true };
     },
-    [showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, showToast, triggerHaptic, users]
   );
 
   const toggleAccountStatus = useCallback(
-    (userId: string): ActionResult => {
+    async (userId: string): Promise<ActionResult> => {
+      const target = users.find((u) => u.id === userId);
+      if (!target) return { ok: false, error: 'User not found.' };
+
+      if (isLiveAdmin) {
+        if (target.role === 'admin') {
+          showToast('Admin accounts cannot be suspended from the mobile UI.', 'warning');
+          return { ok: false };
+        }
+        try {
+          const resource = target.role === 'staff' ? 'staff' : 'students';
+          const action = target.status === 'active' ? 'archive' : 'restore';
+          await liveAdminRequest(`resource=${resource}`, { action, id: userId });
+          await refreshAdminData();
+          triggerHaptic('warning');
+          showToast('Account status updated.', 'dark');
+          return { ok: true };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Failed to update account status.';
+          showToast(msg, 'warning');
+          return { ok: false, error: msg };
+        }
+      }
+
       setUsers((prev) =>
         prev.map((u) =>
           u.id === userId
@@ -464,27 +989,60 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       showToast('Account status updated.', 'dark');
       return { ok: true };
     },
-    [showToast, triggerHaptic]
+    [isLiveAdmin, liveAdminRequest, refreshAdminData, showToast, triggerHaptic, users]
+  );
+
+  const downloadAnalyticsReport = useCallback(
+    async (
+      startDate: string,
+      endDate: string,
+      format: 'csv' | 'pdf',
+      officeId?: string
+    ): Promise<string | null> => {
+      if (!isLiveAdmin) return null;
+      const params = [
+        'resource=analytics',
+        `startDate=${encodeURIComponent(startDate)}`,
+        `endDate=${encodeURIComponent(endDate)}`,
+        `format=${format}`,
+        officeId && officeId !== 'all' ? `officeId=${encodeURIComponent(officeId)}` : '',
+      ]
+        .filter(Boolean)
+        .join('&');
+      return liveAdminDownload(params);
+    },
+    [isLiveAdmin, liveAdminDownload]
   );
 
   const directoryTotalBadges = useMemo(() => {
+    const currentStaffCount = users.filter((u) => u.role === 'staff').length;
+    const currentStudentCount = users.filter((u) => u.role === 'student').length;
+    const currentAdminCount = users.filter((u) => u.role === 'admin').length;
+    if (isLiveAdmin) {
+      return {
+        staff: currentStaffCount,
+        students: currentStudentCount,
+        admins: currentAdminCount,
+      };
+    }
     const baseStaffCount = adminSeed.users.filter((u) => u.role === 'staff').length;
     const baseAdminCount = adminSeed.users.filter((u) => u.role === 'admin').length;
-    const currentStaffCount = users.filter((u) => u.role === 'staff').length;
-    const currentAdminCount = users.filter((u) => u.role === 'admin').length;
     return {
       staff: adminSeed.directoryTotalBadges.staff + (currentStaffCount - baseStaffCount),
       students: adminSeed.directoryTotalBadges.students,
       admins: adminSeed.directoryTotalBadges.admins + (currentAdminCount - baseAdminCount),
     };
-  }, [users]);
+  }, [isLiveAdmin, users]);
 
   const value = useMemo<AdminContextValue>(
     () => ({
       activeAdmin,
       isAdminAuthenticated,
+      isLoadingLive,
+      liveError,
       loginAdmin,
       logoutAdmin,
+      refreshAdminData,
       getKpiSnapshot,
       broadcasts,
       sendBroadcast,
@@ -501,18 +1059,23 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       resetUserPassword,
       toggleAccountStatus,
       auditRecords,
+      downloadAnalyticsReport,
     }),
     [
       activeAdmin,
       auditRecords,
       broadcasts,
       directoryTotalBadges,
+      downloadAnalyticsReport,
       getKpiSnapshot,
       isAdminAuthenticated,
+      isLoadingLive,
+      liveError,
       loginAdmin,
       logoutAdmin,
       offices,
       provisionUser,
+      refreshAdminData,
       resetOfficeSequence,
       resetUserPassword,
       saveOffice,

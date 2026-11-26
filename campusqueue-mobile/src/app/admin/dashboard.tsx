@@ -31,16 +31,27 @@ const DATE_RANGES: AdminDateRange[] = [
  */
 export default function AdminOverviewScreen() {
   const router = useRouter();
-  const { activeAdmin, offices, getKpiSnapshot, sendBroadcast, broadcasts, logoutAdmin } =
-    useAdmin();
-  const { bumpLoginReset, triggerHaptic } = useQueue();
+  const {
+    activeAdmin,
+    offices,
+    getKpiSnapshot,
+    sendBroadcast,
+    broadcasts,
+    logoutAdmin,
+    isLoadingLive,
+    liveError,
+    refreshAdminData,
+  } = useAdmin();
+  const { liveEnabled, bumpLoginReset, triggerHaptic } = useQueue();
 
   const [selectedRange, setSelectedRange] = useState<AdminDateRange>('Today (Live)');
   const [showRangeMenu, setShowRangeMenu] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasError, setHasError] = useState(false);
+  const [isLoadingLocal, setIsLoadingLocal] = useState(false);
   const [drilldownOffice, setDrilldownOffice] = useState<AdminOfficeRecord | null>(null);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+
+  const isLoading = isLoadingLive || isLoadingLocal;
+  const hasError = Boolean(liveError);
 
   const kpi = useMemo(() => getKpiSnapshot(selectedRange), [getKpiSnapshot, selectedRange]);
 
@@ -53,17 +64,23 @@ export default function AdminOverviewScreen() {
     setShowRangeMenu(false);
     if (range === selectedRange) return;
     triggerHaptic('light');
-    setIsLoading(true);
-    setHasError(false);
     setSelectedRange(range);
-    setTimeout(() => setIsLoading(false), 260);
+    if (liveEnabled) {
+      void refreshAdminData(range);
+    } else {
+      setIsLoadingLocal(true);
+      setTimeout(() => setIsLoadingLocal(false), 260);
+    }
   };
 
   const handleRetrySync = () => {
     triggerHaptic('light');
-    setHasError(false);
-    setIsLoading(true);
-    setTimeout(() => setIsLoading(false), 300);
+    if (liveEnabled) {
+      void refreshAdminData(selectedRange);
+    } else {
+      setIsLoadingLocal(true);
+      setTimeout(() => setIsLoadingLocal(false), 300);
+    }
   };
 
   const handleSignOut = () => {

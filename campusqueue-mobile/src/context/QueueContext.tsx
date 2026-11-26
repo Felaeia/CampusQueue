@@ -176,6 +176,8 @@ export interface QueueContextValue {
   liveSignIn: (loginId: string, password: string) => Promise<{ role: string; name?: string }>;
   liveChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   liveVerify: (data: { qrPayload: string } | { ticketNumber: string; usnSuffix: string }) => Promise<VerifiedTicketData>;
+  liveAdminRequest: <T>(query: string, data?: object, method?: 'GET' | 'POST' | 'PATCH') => Promise<T>;
+  liveAdminDownload: (query: string) => Promise<string>;
   authDefaults: AuthDefaults;
   studentAccounts: StudentProfile[];
   studentProfile: StudentProfile;
@@ -1170,6 +1172,8 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     liveSignIn: live.signIn,
     liveChangePassword: live.changePassword,
     liveVerify: live.verify,
+    liveAdminRequest: live.adminRequest,
+    liveAdminDownload: live.adminDownload,
     authDefaults: mockData.authDefaults,
     studentAccounts: studentAccountsList,
     studentProfile,
