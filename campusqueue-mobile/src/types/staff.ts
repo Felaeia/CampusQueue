@@ -6,12 +6,13 @@ export type LogFilterTab = 'My Counter Only' | 'All Office Counters' | 'Skipped 
 
 export interface StaffAccountRecord {
   staffId: string;
-  password: string;
+  password?: string;
   staffName: string;
   office: string;
   officeShort: string;
   defaultCounterWindow: string;
-  role: 'registrar_staff';
+  role: 'registrar_staff' | 'staff';
+  officeId?: string;
 }
 
 export interface StaffQueueTicket {
@@ -25,6 +26,8 @@ export interface StaffQueueTicket {
   issuedAt: string;
   notes?: string;
   isQrVerified: boolean;
+  status?: 'waiting' | 'called' | 'serving';
+  acknowledgedAt?: string | null;
 }
 
 export interface VerifiedTicketData {

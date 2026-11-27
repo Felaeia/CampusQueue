@@ -6,7 +6,8 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
 interface RequeueConfirmModalProps {
   target: HistoryTicket | null;
-  waitingCount: number;
+  waitingCount?: number;
+  busy?: boolean;
   onClose: () => void;
   onConfirm: (target: HistoryTicket) => void;
 }
@@ -14,6 +15,7 @@ interface RequeueConfirmModalProps {
 export function RequeueConfirmModal({
   target,
   waitingCount,
+  busy,
   onClose,
   onConfirm,
 }: RequeueConfirmModalProps) {
@@ -35,7 +37,7 @@ export function RequeueConfirmModal({
             <Text style={styles.bodyBold}>
               {target.officeName} — {target.service}
             </Text>
-            ? Currently <Text style={styles.monoBold}>{waitingCount} waiting</Text>.
+            ? {waitingCount !== undefined && <Text style={styles.monoBold}>{waitingCount} currently waiting.</Text>}
           </Text>
 
           <View style={styles.actions}>
@@ -46,6 +48,7 @@ export function RequeueConfirmModal({
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </Pressable>
             <Pressable
+              disabled={busy}
               onPress={() => onConfirm(target)}
               style={({ pressed }) => [styles.confirmBtn, pressed && styles.pressed]}
             >

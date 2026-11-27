@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -18,19 +18,18 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 interface RequestTicketSheetProps {
   office: Office | null;
   onClose: () => void;
+  busy?: boolean;
   onConfirm: (serviceName: string, notes: string) => void;
 }
 
-export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicketSheetProps) {
-  const [selectedService, setSelectedService] = useState('');
+export function RequestTicketSheet(props: RequestTicketSheetProps) {
+  return props.office ? <RequestTicketSheetForm key={props.office?.id} {...props} /> : null;
+}
+
+function RequestTicketSheetForm({ office, onClose, onConfirm, busy }: RequestTicketSheetProps) {
+  const [selectedService, setSelectedService] = useState(office?.services[0]?.name ?? '');
   const [ticketNotes, setTicketNotes] = useState('');
 
-  useEffect(() => {
-    if (office) {
-      setSelectedService(office.services[0]?.name ?? '');
-      setTicketNotes('');
-    }
-  }, [office]);
 
   if (!office) return null;
 
@@ -132,7 +131,7 @@ export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicket
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </Pressable>
             <Pressable
-              onPress={() => onConfirm(selectedService, ticketNotes)}
+              onPress={() => { if (!busy) onConfirm(selectedService, ticketNotes); }}
               style={({ pressed }) => [
                 styles.confirmBtn,
                 { backgroundColor: office.themeColor },

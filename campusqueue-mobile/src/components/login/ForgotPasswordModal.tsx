@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -21,7 +21,11 @@ interface ForgotPasswordModalProps {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function ForgotPasswordModal({
+export function ForgotPasswordModal(props: ForgotPasswordModalProps) {
+  return props.visible ? <ForgotPasswordModalForm {...props} /> : null;
+}
+
+function ForgotPasswordModalForm({
   visible,
   onClose,
   onSendResetLink,
@@ -29,12 +33,6 @@ export function ForgotPasswordModal({
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setRecoveryEmail('');
-      setRecoveryError('');
-    }
-  }, [visible]);
 
   const handleSubmit = () => {
     setRecoveryError('');

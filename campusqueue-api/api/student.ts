@@ -9,9 +9,10 @@ export default endpoint(["GET", "POST"], async (request) => {
   const inbox = user.collection("notifications");
   if (request.method === "GET") {
     const activeRefs = Object.values(profile.activeTickets ?? {}).filter((id): id is string => typeof id === "string").map(ticketRef);
+    const activeOnly = new URL(request.url).searchParams.get("view") === "active";
     const [active, archived, notifications] = await Promise.all([
       activeRefs.length ? adminDb().getAll(...activeRefs) : [],
-      history(uid).orderBy("timestamp", "desc").limit(100).get(),
+      activeOnly ? null : history(uid).orderBy("timestamp", "desc").limit(100).get(),
       inbox.orderBy("time", "desc").limit(50).get(),
     ]);
     const activeTickets = await Promise.all(active.filter((doc) => doc.exists).map(async (doc) => {
@@ -31,6 +32,10 @@ export default endpoint(["GET", "POST"], async (request) => {
         estWaitMins: ticket.status !== "waiting" ? 0 : (aheadCount + 1) * duration,
       };
     }));
+    if (!archived) return {
+      activeTickets,
+      notifications: notifications.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    };
     const legacyRefs = archived.docs.filter((doc) => !doc.get("ticketSnapshot")).map((doc) => ticketRef(doc.id));
     const past = legacyRefs.length ? await adminDb().getAll(...legacyRefs) : [];
     const recent = new Map(past.map((doc) => [doc.id, doc.data()]));

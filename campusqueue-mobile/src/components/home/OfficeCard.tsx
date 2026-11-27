@@ -54,7 +54,7 @@ export function OfficeCard({
 
         <View style={[styles.crowdPill, { backgroundColor: office.crowdPillBg }]}>
           <Text style={[styles.crowdPillText, { color: office.crowdPillText }]}>
-            {office.crowdBadge}
+            {office.acceptingTickets === false ? 'Closed' : office.crowdBadge}
           </Text>
         </View>
       </View>

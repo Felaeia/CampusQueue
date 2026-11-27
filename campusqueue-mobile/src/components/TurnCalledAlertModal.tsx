@@ -15,12 +15,15 @@ export function TurnCalledAlertModal() {
     setSelectedTicketId,
     showToast,
     triggerHaptic,
+    acknowledgeTicket,
+    isMutating,
   } = useQueue();
 
   if (!calledAlertTicket) return null;
 
-  const handleOnMyWay = () => {
+  const handleOnMyWay = async () => {
     const ticketId = calledAlertTicket.id;
+    if (!(await acknowledgeTicket(ticketId))) return;
     setCalledAlertTicket(null);
     setSelectedTicketId(ticketId);
     triggerHaptic('success');
@@ -34,7 +37,7 @@ export function TurnCalledAlertModal() {
       transparent
       animationType="fade"
       statusBarTranslucent
-      onRequestClose={handleOnMyWay}
+      onRequestClose={() => setCalledAlertTicket(null)}
     >
       <View style={styles.backdrop}>
         <View style={[styles.card, Shadows.modal]}>
@@ -64,10 +67,11 @@ export function TurnCalledAlertModal() {
           </View>
 
           <Pressable
+            disabled={isMutating}
             onPress={handleOnMyWay}
             style={({ pressed }) => [styles.ctaButton, pressed && styles.ctaPressed]}
           >
-            <Text style={styles.ctaText}>I&apos;m On My Way</Text>
+            <Text style={styles.ctaText}>{isMutating ? 'Sending…' : 'I’m On My Way'}</Text>
           </Pressable>
         </View>
       </View>

@@ -111,6 +111,7 @@ export function endpoint(
       const headers = new Headers({ "Cache-Control": "no-store", Vary: "Origin" });
       if (origin && allowed.includes(origin)) {
         headers.set("Access-Control-Allow-Origin", origin);
+        headers.set("Access-Control-Expose-Headers", "Content-Disposition");
         headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
         headers.set("Access-Control-Allow-Methods", [...methods, "OPTIONS"].join(", "));
       }

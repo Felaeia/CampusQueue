@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,11 +10,12 @@ import { NotificationDrawer } from '../../components/home/NotificationDrawer';
 import { OfficeCard } from '../../components/home/OfficeCard';
 import { RequestTicketSheet } from '../../components/home/RequestTicketSheet';
 import { RadarPulseDot } from '../../components/RadarPulseDot';
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { ActiveTicket, Office } from '../../types/queue';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
 export default function StudentHomeScreen() {
+  useQueueFocus('student');
   const router = useRouter();
   const {
     studentProfile,
@@ -27,10 +28,15 @@ export default function StudentHomeScreen() {
     markAllNotificationsRead,
     issueTicket,
     triggerHaptic,
+    showToast,
+    isMutating,
+    syncError,
+    refresh,
   } = useQueue();
 
   const [requestSheetOffice, setRequestSheetOffice] = useState<Office | null>(null);
   const [conflictTicket, setConflictTicket] = useState<ActiveTicket | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
   const primaryActive = activeTickets[0] ?? null;
@@ -48,6 +54,10 @@ export default function StudentHomeScreen() {
       setConflictTicket(existing);
       return;
     }
+    if (office.acceptingTickets === false || !office.services.length) {
+      showToast(office.acceptingTickets === false ? 'This office is closed to new tickets.' : 'There are no available services at this office.', 'warning');
+      return;
+    }
     triggerHaptic('light');
     setRequestSheetOffice(office);
   };
@@ -55,10 +65,15 @@ export default function StudentHomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => {
+          setRefreshing(true);
+          try { await refresh(); } finally { setRefreshing(false); }
+        }} />}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         {/* Top Header Row */}
+        {!!syncError && <Text accessibilityRole="button" onPress={() => void refresh()}>{syncError} Tap to retry.</Text>}
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             <View style={styles.metaRow}>
@@ -149,6 +164,7 @@ export default function StudentHomeScreen() {
 
         {/* Campus Office Cards */}
         <View style={styles.officesList}>
+          {offices.length === 0 && !syncError && <Text>No offices are available.</Text>}
           {offices.map((office) => {
             const activeForOffice = activeTickets.find((t) => t.officeId === office.id);
             return (
@@ -169,6 +185,7 @@ export default function StudentHomeScreen() {
 
       <RequestTicketSheet
         office={requestSheetOffice}
+        busy={isMutating}
         onClose={() => setRequestSheetOffice(null)}
         onConfirm={async (serviceName, notes) => {
           if (!requestSheetOffice) return;

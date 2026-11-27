@@ -37,20 +37,18 @@ export default function AdminOverviewScreen() {
     getKpiSnapshot,
     sendBroadcast,
     broadcasts,
-    logoutAdmin,
     isLoadingLive,
     liveError,
     refreshAdminData,
   } = useAdmin();
-  const { liveEnabled, bumpLoginReset, triggerHaptic } = useQueue();
+  const { bumpLoginReset, triggerHaptic } = useQueue();
 
   const [selectedRange, setSelectedRange] = useState<AdminDateRange>('Today (Live)');
   const [showRangeMenu, setShowRangeMenu] = useState(false);
-  const [isLoadingLocal, setIsLoadingLocal] = useState(false);
   const [drilldownOffice, setDrilldownOffice] = useState<AdminOfficeRecord | null>(null);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
 
-  const isLoading = isLoadingLive || isLoadingLocal;
+  const isLoading = isLoadingLive;
   const hasError = Boolean(liveError);
 
   const kpi = useMemo(() => getKpiSnapshot(selectedRange), [getKpiSnapshot, selectedRange]);
@@ -65,27 +63,16 @@ export default function AdminOverviewScreen() {
     if (range === selectedRange) return;
     triggerHaptic('light');
     setSelectedRange(range);
-    if (liveEnabled) {
-      void refreshAdminData(range);
-    } else {
-      setIsLoadingLocal(true);
-      setTimeout(() => setIsLoadingLocal(false), 260);
-    }
+    void refreshAdminData(range);
   };
 
   const handleRetrySync = () => {
     triggerHaptic('light');
-    if (liveEnabled) {
-      void refreshAdminData(selectedRange);
-    } else {
-      setIsLoadingLocal(true);
-      setTimeout(() => setIsLoadingLocal(false), 300);
-    }
+    void refreshAdminData(selectedRange);
   };
 
   const handleSignOut = () => {
     triggerHaptic('light');
-    logoutAdmin();
     bumpLoginReset();
     router.replace('/auth/login');
   };
@@ -344,7 +331,7 @@ export default function AdminOverviewScreen() {
                           {onlineCounters}/{office.windowCount} counters online
                         </Text>
                         <Text style={styles.officeMetaText}>
-                          {office.activeWaitingCount} waiting • ~{office.avgWaitMinutes}m avg
+                          {office.activeWaitingCount} waiting{office.avgWaitMinutes == null ? '' : ` • ~${office.avgWaitMinutes}m avg`}
                         </Text>
                       </View>
                     </Pressable>
@@ -353,11 +340,11 @@ export default function AdminOverviewScreen() {
               </View>
             </View>
 
-            {/* Peak Hours Activity Chart (8 AM – 5 PM) */}
+            {/* Tickets Issued by Day Chart (8 AM – 5 PM) */}
             <View style={[styles.sectionCard, Shadows.card]}>
               <View style={styles.sectionHeader}>
                 <View>
-                  <Text style={styles.sectionTitle}>Peak Hours Activity</Text>
+                  <Text style={styles.sectionTitle}>Tickets Issued by Day</Text>
                   <Text style={styles.sectionSubtitle}>
                     Hourly ticket issuance volume (8:00 AM – 5:00 PM)
                   </Text>

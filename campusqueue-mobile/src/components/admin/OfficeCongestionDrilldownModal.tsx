@@ -33,7 +33,7 @@ export function OfficeCongestionDrilldownModal({
               <View style={styles.flex}>
                 <Text style={styles.title}>{office.name}</Text>
                 <Text style={styles.subtitle}>
-                  {office.activeWaitingCount} waiting • Avg {office.avgWaitMinutes}m wait
+                  {office.activeWaitingCount} waiting{office.avgWaitMinutes == null ? '' : ` • Avg ${office.avgWaitMinutes}m wait`}
                 </Text>
               </View>
             </View>

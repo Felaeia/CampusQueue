@@ -14,17 +14,19 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 import { DeskStatus, StaffQueueTicket } from '../../types/staff';
 
 export default function StaffQueueDesk() {
+  useQueueFocus('desk');
   const router = useRouter();
-  const { showToast, triggerHaptic, bumpLoginReset } = useQueue();
+  const { showToast, triggerHaptic, bumpLoginReset, isMutating, syncError, refresh } = useQueue();
   const {
     activeStaff,
-    deskConfig,
+    counters,
+    services,
     counterWindow,
     deskStatus,
     servingTicket,
@@ -34,6 +36,7 @@ export default function StaffQueueDesk() {
     setCounterWindow,
     setDeskStatus,
     callNext,
+    startCurrent,
     completeCurrent,
     sendRecall,
     skipCurrent,
@@ -73,7 +76,7 @@ export default function StaffQueueDesk() {
     const nextTicket = await callNext();
     if (!nextTicket) return;
     triggerHaptic('success');
-    showToast(`Now serving ${nextTicket.ticketNumber}`, 'matcha');
+    showToast(`Called ${nextTicket.ticketNumber}`, 'matcha');
   };
 
   const handleCompleteCurrent = async (advance: boolean) => {
@@ -275,6 +278,7 @@ export default function StaffQueueDesk() {
               <View style={styles.actionRow}>
                 <TouchableOpacity
                   style={styles.recallButton}
+                  disabled={isMutating || servingTicket.status === 'serving'}
                   onPress={() => setShowRecallModal(true)}
                   activeOpacity={0.85}
                 >
@@ -283,16 +287,24 @@ export default function StaffQueueDesk() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.completeButton}
-                  onPress={() => setShowCompleteModal(true)}
+                  disabled={isMutating || (servingTicket.status === 'called' && !servingTicket.isQrVerified)}
+                  onPress={async () => {
+                    if (servingTicket.status === 'called') {
+                      if (await startCurrent()) showToast('Service started.', 'matcha');
+                      return;
+                    }
+                    setShowCompleteModal(true);
+                  }}
                   activeOpacity={0.85}
                 >
                   <Ionicons name="checkmark" size={18} color={Colors.ink} />
-                  <Text style={styles.completeButtonText}>Complete</Text>
+                  <Text style={styles.completeButtonText}>{servingTicket.status === 'called' ? 'Start service' : 'Complete'}</Text>
                 </TouchableOpacity>
               </View>
 
               <TouchableOpacity
                 style={styles.skipButton}
+                disabled={isMutating || servingTicket.status === 'serving'}
                 onPress={() => setShowSkipModal(true)}
                 activeOpacity={0.85}
               >
@@ -307,6 +319,7 @@ export default function StaffQueueDesk() {
               <Text style={styles.emptyServingText}>Call the next waiting student.</Text>
               <TouchableOpacity
                 style={styles.callNextButton}
+                disabled={isMutating || deskStatus !== 'online' || !counterWindow}
                 onPress={handleCallNext}
                 activeOpacity={0.85}
               >
@@ -317,22 +330,13 @@ export default function StaffQueueDesk() {
           )}
         </View>
 
+        {!!syncError && <Text accessibilityRole="button" onPress={() => void refresh()}>{syncError} Tap to retry.</Text>}
         <View style={styles.queueSection}>
           <View style={styles.queueHeader}>
             <View>
               <Text style={styles.sectionEyebrow}>LIVE QUEUE</Text>
               <Text style={styles.sectionTitle}>{waitingQueue.length} waiting</Text>
             </View>
-            {servingTicket && waitingQueue.length > 0 ? (
-              <TouchableOpacity
-                style={styles.nextButton}
-                onPress={handleCallNext}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="arrow-forward" size={16} color={Colors.ink} />
-                <Text style={styles.nextButtonText}>Next</Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
 
           <View style={styles.searchBox}>
@@ -351,7 +355,7 @@ export default function StaffQueueDesk() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.serviceFilterRow}
           >
-            {deskConfig.services.map((service) => {
+            {services.map((service) => {
               const active = selectedService === service;
               return (
                 <TouchableOpacity
@@ -412,14 +416,15 @@ export default function StaffQueueDesk() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Counter settings</Text>
             <Text style={styles.modalLabel}>Window</Text>
-            {['Window 1', 'Window 2', 'Window 3'].map((window) => (
+            {counters.length === 0 && <Text>No active counters assigned.</Text>}
+            {counters.map((window) => (
               <TouchableOpacity
-                key={window}
-                style={[styles.optionRow, counterWindow === window && styles.optionRowActive]}
-                onPress={() => setCounterWindow(window)}
+                key={window.id}
+                style={[styles.optionRow, counterWindow === window.id && styles.optionRowActive]}
+                onPress={() => setCounterWindow(window.id)}
               >
-                <Text style={styles.optionText}>{window}</Text>
-                {counterWindow === window && (
+                <Text style={styles.optionText}>{window.name}</Text>
+                {counterWindow === window.id && (
                   <Ionicons name="checkmark-circle" size={20} color={Colors.successText} />
                 )}
               </TouchableOpacity>
@@ -429,7 +434,8 @@ export default function StaffQueueDesk() {
               <TouchableOpacity
                 key={status}
                 style={[styles.optionRow, deskStatus === status && styles.optionRowActive]}
-                onPress={() => setDeskStatus(status)}
+                disabled={isMutating}
+              onPress={() => setDeskStatus(status)}
               >
                 <Text style={styles.optionText}>{status[0].toUpperCase() + status.slice(1)}</Text>
                 {deskStatus === status && (
@@ -473,12 +479,14 @@ export default function StaffQueueDesk() {
             />
             <TouchableOpacity
               style={styles.modalPrimary}
+              disabled={isMutating}
               onPress={() => handleCompleteCurrent(true)}
             >
               <Text style={styles.modalPrimaryText}>Complete and call next</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.modalSecondary}
+              disabled={isMutating}
               onPress={() => handleCompleteCurrent(false)}
             >
               <Text style={styles.modalSecondaryText}>Complete without calling next</Text>
@@ -501,7 +509,8 @@ export default function StaffQueueDesk() {
             <Text style={styles.modalBody}>
               Notify the student that {servingTicket?.ticketNumber} is now being served.
             </Text>
-            <TouchableOpacity style={styles.modalPrimary} onPress={handleSendRecall}>
+            <TouchableOpacity style={styles.modalPrimary} disabled={isMutating}
+              onPress={handleSendRecall}>
               <Text style={styles.modalPrimaryText}>Send recall</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -536,6 +545,7 @@ export default function StaffQueueDesk() {
             />
             <TouchableOpacity
               style={[styles.modalPrimary, styles.dangerPrimary]}
+              disabled={isMutating}
               onPress={handleSkipCurrent}
             >
               <Text style={styles.dangerPrimaryText}>Confirm skip</Text>

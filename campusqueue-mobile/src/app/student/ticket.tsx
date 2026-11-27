@@ -11,10 +11,11 @@ import { TicketBarcode } from '../../components/TicketBarcode';
 import { FullScreenQRModal } from '../../components/ticket/FullScreenQRModal';
 import { LeaveQueueModal } from '../../components/ticket/LeaveQueueModal';
 import { LiveQueueTrack } from '../../components/ticket/LiveQueueTrack';
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { Colors, Fonts, getOfficeAccent, Radii, Shadows } from '../../theme/tokens';
 
 export default function ActiveTicketScreen() {
+  useQueueFocus('student');
   const router = useRouter();
   const {
     studentProfile,
@@ -24,9 +25,9 @@ export default function ActiveTicketScreen() {
     barcodePattern,
     setSelectedTicketId,
     cancelTicket,
-    advanceQueue,
-    liveEnabled,
-    resetSimulation,
+    isMutating,
+    refresh,
+    syncError,
     triggerHaptic,
   } = useQueue();
 
@@ -78,7 +79,7 @@ export default function ActiveTicketScreen() {
     );
   }
 
-  const isServing = ticket.aheadCount === 0 || ticket.status === 'serving';
+  const isServing = ticket.status === 'serving';
   const officePillColor = getOfficeAccent(ticket.officeId);
 
   const ordinalText =
@@ -178,7 +179,7 @@ export default function ActiveTicketScreen() {
               <View style={styles.rightAlign}>
                 <Text style={styles.darkLabel}>EST. WAIT TIME</Text>
                 <Text style={styles.waitValue}>
-                  {isServing ? 'NOW' : `~${ticket.estWaitMins}mins`}
+                  {isServing ? 'NOW' : Number.isFinite(ticket.estWaitMins) ? `~${ticket.estWaitMins} mins` : '—'}
                 </Text>
               </View>
             </View>
@@ -258,8 +259,8 @@ export default function ActiveTicketScreen() {
           </View>
         </View>
 
-        {/* Cancel Ticket Button */}
-        <Pressable
+        {!!syncError && <Text accessibilityRole="button" onPress={() => void refresh()}>{syncError} Tap to retry.</Text>}
+        {(ticket.lifecycleStatus ?? ticket.status) === 'waiting' && <Pressable
           onPress={() => {
             triggerHaptic('warning');
             setShowCancelModal(true);
@@ -267,33 +268,8 @@ export default function ActiveTicketScreen() {
           style={({ pressed }) => [styles.cancelButton, pressed && styles.cancelButtonPressed]}
         >
           <Text style={styles.cancelButtonText}>Leave Queue / Cancel Ticket</Text>
-        </Pressable>
+        </Pressable>}
 
-        {/* Compact Live Queue Simulator Controls */}
-        {!liveEnabled && <View style={styles.simulatorBar}>
-          <Pressable
-            onPress={() => {
-              const result = advanceQueue();
-              if (result === 'completed') {
-                router.replace('/student/history');
-              }
-            }}
-            style={({ pressed }) => [styles.simAdvanceBtn, pressed && styles.pressed]}
-          >
-            <View style={styles.simDot} />
-            <Text style={styles.simAdvanceText}>
-              {isServing ? 'Complete Service Step' : 'Simulate Queue Step'}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            onPress={resetSimulation}
-            accessibilityLabel="Reset queue simulation"
-            style={({ pressed }) => [styles.simResetBtn, pressed && styles.pressed]}
-          >
-            <Feather name="rotate-ccw" size={14} color={Colors.ink} />
-          </Pressable>
-        </View>}
       </ScrollView>
 
       <FullScreenQRModal
@@ -307,6 +283,7 @@ export default function ActiveTicketScreen() {
         visible={showCancelModal}
         ticket={ticket}
         reasons={cancelReasons}
+        busy={isMutating}
         onClose={() => setShowCancelModal(false)}
         onConfirmCancel={async (reason) => {
           if (!(await cancelTicket(ticket.id, reason))) return;

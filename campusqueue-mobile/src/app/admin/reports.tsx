@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,44 +14,30 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdminRecordDetailModal } from '../../components/admin/AdminRecordDetailModal';
 import { ExportSystemReportModal } from '../../components/admin/ExportSystemReportModal';
-import { useAdmin } from '../../context/AdminContext';
+import { manilaDateString, useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows, getTicketStatusBadgeStyle } from '../../theme/tokens';
 import { AdminAuditRecord, AuditOutcome } from '../../types/admin';
-
-const OFFICE_FILTERS = [
-  { id: 'all', label: 'All Offices' },
-  { id: 'registrar', label: 'Registrar' },
-  { id: 'accounting', label: 'Accounting Office' },
-  { id: 'sao', label: 'Student Affairs Office' },
-];
 
 const OUTCOME_FILTERS: ('All Outcomes' | AuditOutcome)[] = [
   'All Outcomes',
   'Completed',
   'Skipped',
   'Cancelled',
+  'Activity',
 ];
 
 const PAGE_SIZE = 25;
-
-function formatAvgDuration(totalSeconds: number, count: number): string {
-  if (!count) return '00m 00s';
-  const avg = Math.round(totalSeconds / count);
-  const mins = String(Math.floor(avg / 60)).padStart(2, '0');
-  const secs = String(avg % 60).padStart(2, '0');
-  return `${mins}m ${secs}s`;
-}
 
 /**
  * Screen 4.4: System Audit Trail & Daily Transaction Records (/admin/reports)
  */
 export default function AdminReportsScreen() {
-  const { auditRecords, downloadAnalyticsReport } = useAdmin();
-  const { liveEnabled, showToast, triggerHaptic } = useQueue();
+  const { offices, loadAuditRecords, downloadAnalyticsReport } = useAdmin();
+  const { showToast, triggerHaptic } = useQueue();
 
-  const [startDate, setStartDate] = useState('2026-11-26');
-  const [endDate, setEndDate] = useState('2026-11-26');
+  const [startDate, setStartDate] = useState(() => manilaDateString(0));
+  const [endDate, setEndDate] = useState(() => manilaDateString(0));
   const [officeFilter, setOfficeFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState<'All Outcomes' | AuditOutcome>('All Outcomes');
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,7 +46,31 @@ export default function AdminReportsScreen() {
   const [selectedRecord, setSelectedRecord] = useState<AdminAuditRecord | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
 
-  const dateRangeInvalid = Boolean(startDate && endDate && startDate > endDate);
+  const [auditRecords, setAuditRecords] = useState<AdminAuditRecord[]>([]);
+  const [auditError, setAuditError] = useState('');
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  const dateRangeInvalid = !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate;
+  const officeFilters = [{ id: 'all', label: 'All Offices' }, ...offices.map((office) => ({ id: office.id, label: office.name }))];
+
+  useEffect(() => {
+    if (dateRangeInvalid) return;
+    let current = true;
+    const timer = setTimeout(async () => {
+      setAuditLoading(true);
+      setAuditError('');
+      try {
+        const records = await loadAuditRecords(startDate, endDate, officeFilter);
+        if (current) setAuditRecords(records);
+      } catch (error) {
+        if (current) setAuditError(error instanceof Error ? error.message : 'Could not load activity.');
+      } finally {
+        if (current) setAuditLoading(false);
+      }
+    }, 250);
+    return () => { current = false; clearTimeout(timer); };
+  }, [dateRangeInvalid, endDate, loadAuditRecords, officeFilter, retry, startDate]);
 
   const filteredRecords = useMemo(() => {
     if (dateRangeInvalid) return [];
@@ -85,20 +96,8 @@ export default function AdminReportsScreen() {
     [filteredRecords, page]
   );
 
-  const aggregates = useMemo(() => {
-    const waitSum = filteredRecords.reduce((acc, r) => acc + r.waitDurationSeconds, 0);
-    const completed = filteredRecords.filter((r) => r.serviceDurationSeconds > 0);
-    const serviceSum = completed.reduce((acc, r) => acc + r.serviceDurationSeconds, 0);
-    return {
-      count: filteredRecords.length,
-      avgWait: formatAvgDuration(waitSum, filteredRecords.length),
-      avgService: formatAvgDuration(serviceSum, completed.length),
-    };
-  }, [filteredRecords]);
-
-  const activeOfficeLabel =
-    OFFICE_FILTERS.find((o) => o.id === officeFilter)?.label ?? 'All Offices';
-  const filterSummary = `${startDate} to ${endDate} • ${activeOfficeLabel} • ${outcomeFilter}`;
+  const activeOfficeLabel = officeFilters.find((office) => office.id === officeFilter)?.label ?? 'All Offices';
+  const filterSummary = `${startDate} to ${endDate} • ${activeOfficeLabel}`;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -111,6 +110,7 @@ export default function AdminReportsScreen() {
           <Text style={styles.headerSub}>Historical transactions & SLA evaluation</Text>
         </View>
         <Pressable
+          disabled={dateRangeInvalid}
           onPress={() => {
             triggerHaptic('light');
             setShowExportModal(true);
@@ -132,17 +132,17 @@ export default function AdminReportsScreen() {
         <View style={[styles.aggregateStrip, Shadows.heroDark]}>
           <View style={styles.aggItem}>
             <Text style={styles.aggLabel}>MATCHING</Text>
-            <Text style={styles.aggValueMatcha}>{aggregates.count}</Text>
+            <Text style={styles.aggValueMatcha}>{filteredRecords.length}</Text>
           </View>
           <View style={styles.aggDivider} />
           <View style={styles.aggItem}>
             <Text style={styles.aggLabel}>AVG WAIT</Text>
-            <Text style={styles.aggValue}>{aggregates.avgWait}</Text>
+            <Text style={styles.aggValue}>—</Text>
           </View>
           <View style={styles.aggDivider} />
           <View style={styles.aggItem}>
             <Text style={styles.aggLabel}>AVG SERVICE</Text>
-            <Text style={styles.aggValue}>{aggregates.avgService}</Text>
+            <Text style={styles.aggValue}>—</Text>
           </View>
         </View>
 
@@ -180,8 +180,8 @@ export default function AdminReportsScreen() {
           <View style={styles.presetRow}>
             <Pressable
               onPress={() => {
-                setStartDate('2026-11-26');
-                setEndDate('2026-11-26');
+                setStartDate(manilaDateString(0));
+                setEndDate(manilaDateString(0));
                 setPage(1);
               }}
               style={styles.presetChip}
@@ -190,8 +190,8 @@ export default function AdminReportsScreen() {
             </Pressable>
             <Pressable
               onPress={() => {
-                setStartDate('2026-11-25');
-                setEndDate('2026-11-26');
+                setStartDate(manilaDateString(-1));
+                setEndDate(manilaDateString(0));
                 setPage(1);
               }}
               style={styles.presetChip}
@@ -200,8 +200,8 @@ export default function AdminReportsScreen() {
             </Pressable>
             <Pressable
               onPress={() => {
-                setStartDate('2026-11-01');
-                setEndDate('2026-11-30');
+                setStartDate(manilaDateString(0).slice(0, 8) + '01');
+                setEndDate(manilaDateString(0));
                 setPage(1);
               }}
               style={styles.presetChip}
@@ -236,7 +236,7 @@ export default function AdminReportsScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.pillRow}
           >
-            {OFFICE_FILTERS.map((opt) => {
+            {officeFilters.map((opt) => {
               const active = officeFilter === opt.id;
               return (
                 <Pressable
@@ -282,6 +282,8 @@ export default function AdminReportsScreen() {
         </View>
 
         {/* Error State */}
+        {auditError && !dateRangeInvalid && <Text accessibilityRole="button" onPress={() => setRetry((attempt) => attempt + 1)}>{auditError} Tap to retry.</Text>}
+        {auditLoading && !dateRangeInvalid && <ActivityIndicator accessibilityLabel="Loading activity logs" />}
         {dateRangeInvalid ? (
           <View style={styles.errorCard}>
             <Feather name="alert-circle" size={18} color={Colors.danger} />
@@ -382,15 +384,8 @@ export default function AdminReportsScreen() {
         records={filteredRecords}
         filterSummary={filterSummary}
         onClose={() => setShowExportModal(false)}
-        onLiveDownload={
-          liveEnabled
-            ? (fmt) => downloadAnalyticsReport(startDate, endDate, fmt, officeFilter)
-            : undefined
-        }
-        onExported={(count) => {
-          triggerHaptic('success');
-          showToast(`Master transaction report exported (${count} records).`, 'matcha');
-        }}
+        onLiveDownload={(format) => downloadAnalyticsReport(startDate, endDate, format, officeFilter)}
+        onExported={() => showToast('Analytics report ready.', 'matcha')}
       />
     </SafeAreaView>
   );

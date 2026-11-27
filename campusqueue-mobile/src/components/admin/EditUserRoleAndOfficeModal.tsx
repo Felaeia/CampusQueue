@@ -1,36 +1,54 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 import { AdminOfficeRecord, AdminUserRecord } from '../../types/admin';
 
-const WINDOW_OPTIONS = ['Window 1', 'Window 2', 'Window 3', 'Window 4'];
 
 interface EditUserRoleAndOfficeModalProps {
   user: AdminUserRecord | null;
   offices: AdminOfficeRecord[];
   onClose: () => void;
-  onSave: (userId: string, officeId: string, defaultWindow: string) => void;
+  onSave: (userId: string, officeId: string, defaultWindow: string) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
-export function EditUserRoleAndOfficeModal({
+export function EditUserRoleAndOfficeModal(props: EditUserRoleAndOfficeModalProps) {
+  return props.user ? <EditUserRoleAndOfficeModalForm key={props.user?.id} {...props} /> : null;
+}
+
+function EditUserRoleAndOfficeModalForm({
   user,
   offices,
   onClose,
   onSave,
 }: EditUserRoleAndOfficeModalProps) {
-  const [selectedOfficeId, setSelectedOfficeId] = useState(offices[0]?.id ?? '');
-  const [selectedWindow, setSelectedWindow] = useState('Window 1');
+  const [selectedOfficeId, setSelectedOfficeId] = useState(user?.assignedOfficeId ?? offices[0]?.id ?? '');
+  const [selectedWindow, setSelectedWindow] = useState(user?.defaultWindow ?? '');
 
-  useEffect(() => {
-    if (user) {
-      setSelectedOfficeId(user.assignedOfficeId ?? offices[0]?.id ?? '');
-      setSelectedWindow(user.defaultWindow ?? 'Window 1');
-    }
-  }, [offices, user]);
 
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
   if (!user) return null;
+  const windows = offices.find((office) => office.id === selectedOfficeId)?.windows ?? [];
+
+  const submit = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await onSave(user.id, selectedOfficeId, selectedWindow);
+      if (result.ok) onClose();
+      else setError(result.error ?? 'Unable to save the assignment.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to save the assignment.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
 
   return (
     <Modal visible={Boolean(user)} transparent animationType="fade" onRequestClose={onClose}>
@@ -56,7 +74,7 @@ export function EditUserRoleAndOfficeModal({
                 return (
                   <Pressable
                     key={office.id}
-                    onPress={() => setSelectedOfficeId(office.id)}
+                    onPress={() => { setSelectedOfficeId(office.id); setSelectedWindow(office.windows[0]?.id ?? ''); }}
                     style={[styles.chip, active && styles.chipActive]}
                   >
                     <Text style={[styles.chipText, active && styles.chipTextActive]}>
@@ -71,21 +89,22 @@ export function EditUserRoleAndOfficeModal({
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>Default Counter Window</Text>
             <View style={styles.chipRow}>
-              {WINDOW_OPTIONS.map((win) => {
-                const active = selectedWindow === win;
+              {windows.map((win) => {
+                const active = selectedWindow === win.id;
                 return (
                   <Pressable
-                    key={win}
-                    onPress={() => setSelectedWindow(win)}
+                    key={win.id}
+                    onPress={() => setSelectedWindow(win.id)}
                     style={[styles.chip, active && styles.chipActive]}
                   >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{win}</Text>
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{win.label}</Text>
                   </Pressable>
                 );
               })}
             </View>
           </View>
 
+          {!!error && <Text accessibilityRole="alert">{error}</Text>}
           <View style={styles.actionsRow}>
             <Pressable
               onPress={onClose}
@@ -94,10 +113,8 @@ export function EditUserRoleAndOfficeModal({
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              onPress={() => {
-                onSave(user.id, selectedOfficeId, selectedWindow);
-                onClose();
-              }}
+              disabled={busy || !windows.some((window) => window.id === selectedWindow)}
+              onPress={submit}
               style={({ pressed }) => [styles.saveBtn, pressed && styles.pressed]}
             >
               <Text style={styles.saveText}>Save Assignment</Text>

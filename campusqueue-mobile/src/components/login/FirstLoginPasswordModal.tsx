@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -21,7 +21,11 @@ interface FirstLoginPasswordModalProps {
   onUpdatePassword: (newPassword: string) => void;
 }
 
-export function FirstLoginPasswordModal({
+export function FirstLoginPasswordModal(props: FirstLoginPasswordModalProps) {
+  return props.visible ? <FirstLoginPasswordModalForm {...props} /> : null;
+}
+
+function FirstLoginPasswordModalForm({
   visible,
   defaultPassword,
   minLength,
@@ -32,13 +36,6 @@ export function FirstLoginPasswordModal({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errorText, setErrorText] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setNewPassword('');
-      setConfirmPassword('');
-      setErrorText('');
-    }
-  }, [visible]);
 
   const handleSubmit = () => {
     setErrorText('');

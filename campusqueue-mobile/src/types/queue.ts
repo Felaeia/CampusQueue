@@ -1,4 +1,4 @@
-export type OfficeId = 'registrar' | 'accounting' | 'sao';
+export type OfficeId = string;
 
 export type ActiveTicketStatus = 'waiting' | 'serving';
 
@@ -52,6 +52,7 @@ export interface Office {
   crowdPillBg: string;
   crowdPillText: string;
   services: OfficeService[];
+  acceptingTickets?: boolean;
 }
 
 export interface ActiveTicket {
@@ -63,6 +64,8 @@ export interface ActiveTicket {
   shortOffice: string;
   counter: string;
   status: ActiveTicketStatus;
+  lifecycleStatus?: 'waiting' | 'called' | 'serving';
+  acknowledgedAt?: string;
   service: string;
   holderShort: string;
   studentUsn: string;

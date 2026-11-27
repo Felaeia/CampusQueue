@@ -40,7 +40,9 @@
           "resizeMode": "contain",
           "backgroundColor": "#F5F3EE"
         }
-      ]
+      ],
+      "expo-secure-store",
+      "expo-sharing"
     ]
   }
 }

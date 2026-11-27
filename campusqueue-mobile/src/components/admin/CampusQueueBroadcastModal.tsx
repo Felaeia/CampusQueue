@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -28,7 +28,11 @@ interface CampusQueueBroadcastModalProps {
   onSend: (input: SendBroadcastInput) => { ok: boolean; error?: string };
 }
 
-export function CampusQueueBroadcastModal({
+export function CampusQueueBroadcastModal(props: CampusQueueBroadcastModalProps) {
+  return props.visible ? <CampusQueueBroadcastModalForm {...props} /> : null;
+}
+
+function CampusQueueBroadcastModalForm({
   visible,
   offices,
   onClose,
@@ -42,15 +46,6 @@ export function CampusQueueBroadcastModal({
   const [message, setMessage] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setTargetAudience('All Active Waiting Students');
-      setSelectedOfficeId(offices[0]?.id ?? '');
-      setTitle('');
-      setMessage('');
-      setErrorMsg('');
-    }
-  }, [offices, visible]);
 
   const handleSubmit = () => {
     const res = onSend({

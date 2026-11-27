@@ -1,46 +1,11 @@
 import { useQueue } from './QueueContext';
-import {
-  DeskStatus,
-  ProcessedTransaction,
-  StaffAccountRecord,
-  StaffQueueTicket,
-  StaffRegistrarDataBundle,
-} from '../types/staff';
 
-export interface StaffQueueContextValue {
-  activeStaff: StaffAccountRecord;
-  deskConfig: StaffRegistrarDataBundle['desk'];
-  scannerConfig: StaffRegistrarDataBundle['scanner'];
-  logsConfig: StaffRegistrarDataBundle['logs'];
-  counterWindow: string;
-  deskStatus: DeskStatus;
-  servingTicket: StaffQueueTicket | null;
-  waitingQueue: StaffQueueTicket[];
-  elapsedSeconds: number;
-  recallCount: number;
-  transactions: ProcessedTransaction[];
-  servedByMeCount: number;
-  officeCompletedCount: number;
-  skippedCount: number;
-  setCounterWindow: (windowLabel: string) => void;
-  setDeskStatus: (status: DeskStatus) => void;
-  callNext: ReturnType<typeof useQueue>['staffCallNext'];
-  completeCurrent: ReturnType<typeof useQueue>['staffCompleteCurrent'];
-  sendRecall: ReturnType<typeof useQueue>['staffSendRecall'];
-  skipCurrent: ReturnType<typeof useQueue>['staffSkipCurrent'];
-  markTicketVerified: (ticketNumber: string) => void;
-}
-
-/**
- * Facade hook exposing synchronized Registrar Staff state backed by the root QueueContext.
- */
-export function useStaffQueue(): StaffQueueContextValue {
+export function useStaffQueue() {
   const queue = useQueue();
-
   return {
     activeStaff: queue.activeStaff,
-    deskConfig: queue.deskConfig,
-    scannerConfig: queue.scannerConfig,
+    counters: queue.staffCounters,
+    services: queue.staffServices,
     logsConfig: queue.logsConfig,
     counterWindow: queue.staffCounterWindow,
     deskStatus: queue.staffDeskStatus,
@@ -55,9 +20,9 @@ export function useStaffQueue(): StaffQueueContextValue {
     setCounterWindow: queue.setStaffCounterWindow,
     setDeskStatus: queue.setStaffDeskStatus,
     callNext: queue.staffCallNext,
+    startCurrent: queue.staffStartCurrent,
     completeCurrent: queue.staffCompleteCurrent,
     sendRecall: queue.staffSendRecall,
     skipCurrent: queue.staffSkipCurrent,
-    markTicketVerified: queue.staffMarkTicketVerified,
   };
 }

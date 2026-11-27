@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
@@ -11,16 +11,17 @@ interface ResetOfficeQueueSequenceModalProps {
   onConfirmReset: (officeId: string) => { ok: boolean; error?: string };
 }
 
-export function ResetOfficeQueueSequenceModal({
+export function ResetOfficeQueueSequenceModal(props: ResetOfficeQueueSequenceModalProps) {
+  return props.office ? <ResetOfficeQueueSequenceModalForm key={props.office?.id} {...props} /> : null;
+}
+
+function ResetOfficeQueueSequenceModalForm({
   office,
   onClose,
   onConfirmReset,
 }: ResetOfficeQueueSequenceModalProps) {
   const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    setErrorMsg('');
-  }, [office]);
 
   if (!office) return null;
 

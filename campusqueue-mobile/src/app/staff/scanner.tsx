@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -14,16 +14,18 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 import { VerifiedTicketData } from '../../types/staff';
 
 export default function StaffQRScanner() {
+  useQueueFocus('desk');
   const router = useRouter();
-  const { studentAccounts, showToast, triggerHaptic, liveEnabled, liveVerify } = useQueue();
-  const { scannerConfig, counterWindow, servingTicket, waitingQueue, markTicketVerified } =
-    useStaffQueue();
+  const { showToast, triggerHaptic, liveVerify } = useQueue();
+  const { counterWindow, servingTicket } = useStaffQueue();
+  const verifying = useRef(false);
+  const [isVerifying, setIsVerifying] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
 
   // Scanner Controls
@@ -39,176 +41,40 @@ export default function StaffQRScanner() {
   const [manualTicketNum, setManualTicketNum] = useState('');
   const [manualUsnLast4, setManualUsnLast4] = useState('');
 
-  const expectedTicketCode = servingTicket?.ticketNumber ?? scannerConfig.expectedTicket;
-  const expectedUsnSuffix = servingTicket?.usn.slice(-4) ?? scannerConfig.usnPlaceholder;
+  const expectedTicketCode = servingTicket?.ticketNumber ?? 'Ticket number';
+  const expectedUsnSuffix = 'Last 4 digits';
 
-  const findActiveTicket = (ticketCode: string) => {
-    const clean = ticketCode.trim().toUpperCase();
-    if (servingTicket && servingTicket.ticketNumber.toUpperCase() === clean) {
-      return servingTicket;
-    }
-    return waitingQueue.find((item) => item.ticketNumber.toUpperCase() === clean) ?? null;
-  };
-
-  // Parse student CampusQueue QR payload: cq:v1:{ticketNumber}:{usn} or CQ-2026-{ticketNumber}
-  const verifyLive = async (data: Parameters<typeof liveVerify>[0]) => {
+  const verify = async (data: Parameters<typeof liveVerify>[0]) => {
+    if (verifying.current) return;
+    verifying.current = true;
+    setIsVerifying(true);
+    setIsScanning(false);
     try {
       setVerifiedTicket(await liveVerify(data));
       triggerHaptic('success');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Ticket verification failed.');
       triggerHaptic('warning');
+    } finally {
+      verifying.current = false;
+      setIsVerifying(false);
     }
   };
 
   const handleBarcodeScanned = ({ data }: { data: string }) => {
-    if (!isScanning) return;
-    setIsScanning(false);
-
-    if (liveEnabled) {
-      void verifyLive({ qrPayload: data });
-      return;
-    }
-
-    const raw = data.trim();
-    const v1Match = raw.match(/^cq:v1:([A-Z]-\d{3})(?::(\d+))?/i);
-    const serialMatch = raw.match(/^CQ-\d{4}-([A-Z])(\d{3})$/i);
-
-    const parsedTicket = v1Match
-      ? v1Match[1].toUpperCase()
-      : serialMatch
-      ? `${serialMatch[1].toUpperCase()}-${serialMatch[2]}`
-      : null;
-    const parsedUsn = v1Match?.[2] ?? null;
-
-    if (parsedTicket && parsedTicket.startsWith('A-')) {
-      triggerHaptic('warning');
-      setErrorMessage(
-        'Wrong Office: This ticket is issued for the Accounting Office, not the Registrar Office.'
-      );
-      return;
-    }
-
-    if (parsedTicket && parsedTicket.startsWith('S-')) {
-      triggerHaptic('warning');
-      setErrorMessage(
-        'Wrong Office: This ticket is issued for Student Affairs, not the Registrar Office.'
-      );
-      return;
-    }
-
-    if (parsedTicket && parsedTicket.startsWith('R-')) {
-      const liveMatch = findActiveTicket(parsedTicket);
-      if (liveMatch) {
-        markTicketVerified(liveMatch.ticketNumber);
-        triggerHaptic('success');
-        setVerifiedTicket({
-          ticketNumber: liveMatch.ticketNumber,
-          studentName: liveMatch.studentName,
-          usn: liveMatch.usn,
-          program: liveMatch.program,
-          serviceType: liveMatch.serviceType,
-          issuedAt: liveMatch.issuedAt,
-          method: 'qr_scan',
-        });
-        return;
-      }
-
-      // Cross-device fallback: resolve student profile from USN in QR payload
-      const knownStudent = parsedUsn
-        ? studentAccounts.find((student) => student.usn === parsedUsn)
-        : null;
-      markTicketVerified(parsedTicket);
-      triggerHaptic('success');
-      setVerifiedTicket({
-        ticketNumber: parsedTicket,
-        studentName: knownStudent?.fullName ?? 'Verified CampusQueue Student',
-        usn: parsedUsn ?? '—',
-        program: knownStudent?.program ?? 'ACLC College of Mandaue',
-        serviceType: 'Registrar Service',
-        issuedAt: 'Today',
-        method: 'qr_scan',
-      });
-      return;
-    }
-
-    if (raw.includes('A-')) {
-      triggerHaptic('warning');
-      setErrorMessage(
-        'Wrong Office: This ticket is issued for the Accounting Office, not the Registrar Office.'
-      );
-    } else if (raw.includes('S-')) {
-      triggerHaptic('warning');
-      setErrorMessage(
-        'Wrong Office: This ticket is issued for Student Affairs, not the Registrar Office.'
-      );
-    } else {
-      triggerHaptic('warning');
-      setErrorMessage(scannerConfig.invalidQrError);
-    }
+    if (isScanning && !showManualModal) void verify({ qrPayload: data });
   };
 
-  // Manual USN Lookup Fallback
   const handleManualVerify = () => {
-    if (liveEnabled) {
-      setShowManualModal(false);
+    const ticketNumber = manualTicketNum.trim().toUpperCase();
+    const usnSuffix = manualUsnLast4.trim();
+    setShowManualModal(false);
+    if (!ticketNumber || !/^\d{4}$/.test(usnSuffix)) {
       setIsScanning(false);
-      void verifyLive({ ticketNumber: manualTicketNum, usnSuffix: manualUsnLast4 });
+      setErrorMessage('Enter the ticket number and the last four digits of the student USN.');
       return;
     }
-    const cleanTicket = manualTicketNum.trim().toUpperCase();
-    const cleanUsn = manualUsnLast4.trim();
-
-    if (!cleanTicket || cleanUsn.length !== 4) {
-      setShowManualModal(false);
-      setIsScanning(false);
-      triggerHaptic('warning');
-      setErrorMessage(scannerConfig.manualInputError);
-      return;
-    }
-
-    const activeMatch = findActiveTicket(cleanTicket);
-    if (activeMatch && activeMatch.usn.endsWith(cleanUsn)) {
-      setShowManualModal(false);
-      setIsScanning(false);
-      setManualTicketNum('');
-      setManualUsnLast4('');
-      markTicketVerified(activeMatch.ticketNumber);
-      triggerHaptic('success');
-      setVerifiedTicket({
-        ticketNumber: activeMatch.ticketNumber,
-        studentName: activeMatch.studentName,
-        usn: activeMatch.usn,
-        program: activeMatch.program,
-        serviceType: activeMatch.serviceType,
-        issuedAt: activeMatch.issuedAt,
-        method: 'manual_usn_check',
-      });
-      return;
-    }
-
-    if (
-      cleanTicket === scannerConfig.expectedTicket &&
-      cleanUsn === scannerConfig.manualUsnSuffix
-    ) {
-      setShowManualModal(false);
-      setIsScanning(false);
-      setManualTicketNum('');
-      setManualUsnLast4('');
-      markTicketVerified(scannerConfig.verifiedTicket.ticketNumber);
-      triggerHaptic('success');
-      setVerifiedTicket({
-        ...scannerConfig.verifiedTicket,
-        method: 'manual_usn_check',
-      });
-    } else {
-      setShowManualModal(false);
-      setIsScanning(false);
-      triggerHaptic('warning');
-      setErrorMessage(
-        `No active waiting/serving ticket found matching "${cleanTicket}" with USN ending in "${cleanUsn}".`
-      );
-    }
+    void verify({ ticketNumber, usnSuffix });
   };
 
   const resetScanner = () => {
@@ -223,11 +89,7 @@ export default function StaffQRScanner() {
     if (verifiedNum) {
       showToast(`Ticket ${verifiedNum} QR verified`, 'matcha');
     }
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/staff/registrar');
-    }
+    router.replace('/staff/registrar');
   };
 
   const modals = (
@@ -353,7 +215,8 @@ export default function StaffQRScanner() {
               style={styles.textInput}
             />
 
-            <TouchableOpacity style={styles.primaryEmeraldBtn} onPress={handleManualVerify}>
+            <TouchableOpacity style={styles.primaryEmeraldBtn} disabled={isVerifying}
+              onPress={handleManualVerify}>
               <Text style={styles.primaryEmeraldBtnText}>Verify Ticket</Text>
             </TouchableOpacity>
 
@@ -409,11 +272,7 @@ export default function StaffQRScanner() {
         <TouchableOpacity
           style={styles.backTextBtn}
           onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace('/staff/registrar');
-            }
+            router.replace('/staff/registrar');
           }}
         >
           <Text style={styles.backTextLabel}>Back to Counter Console</Text>
@@ -434,7 +293,7 @@ export default function StaffQRScanner() {
         facing="back"
         enableTorch={torchEnabled}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onBarcodeScanned={isScanning ? handleBarcodeScanned : undefined}
+        onBarcodeScanned={isScanning && !isVerifying ? handleBarcodeScanned : undefined}
       />
 
       {/* Darkened Viewfinder Overlay */}
@@ -444,11 +303,7 @@ export default function StaffQRScanner() {
           <TouchableOpacity
             style={styles.circleIconBtn}
             onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace('/staff/registrar');
-              }
+              router.replace('/staff/registrar');
             }}
           >
             <Ionicons name="arrow-back" size={22} color={Colors.surface} />

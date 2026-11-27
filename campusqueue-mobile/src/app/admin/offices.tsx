@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -46,15 +46,10 @@ export default function AdminOfficesScreen() {
 
   const [resetTargetOffice, setResetTargetOffice] = useState<AdminOfficeRecord | null>(null);
 
-  useEffect(() => {
-    if (focusOfficeId) {
-      setExpandedIds((prev) => ({ ...prev, [focusOfficeId]: true }));
-    }
-  }, [focusOfficeId]);
 
   const toggleExpand = (id: string) => {
     triggerHaptic('light');
-    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+    setExpandedIds((prev) => ({ ...prev, [id]: !(prev[id] ?? focusOfficeId === id) }));
   };
 
   return (
@@ -97,7 +92,7 @@ export default function AdminOfficesScreen() {
           </View>
         ) : (
           offices.map((office) => {
-            const isExpanded = Boolean(expandedIds[office.id]);
+            const isExpanded = (expandedIds[office.id] ?? focusOfficeId === office.id);
             const isOpen = office.status === 'open';
             const lastIssuedLabel = `${office.prefix}-${String(office.lastIssuedNumber).padStart(3, '0')}`;
 

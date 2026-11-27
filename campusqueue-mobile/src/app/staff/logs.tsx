@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import {
   Modal,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -13,15 +12,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useQueue } from '../../context/QueueContext';
+import { shareReport } from '../../context/shareReport';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 import { LogFilterTab, ProcessedTransaction } from '../../types/staff';
 
 export default function StaffDailyLog() {
-  const { showToast, triggerHaptic } = useQueue();
+  useQueueFocus('logs');
+  const { showToast } = useQueue();
   const {
-    activeStaff,
     logsConfig,
     counterWindow,
     transactions,
@@ -51,25 +51,21 @@ export default function StaffDailyLog() {
     });
   }, [activeFilter, counterWindow, searchQuery, transactions]);
 
+  const { staffDownload, syncError, refresh } = useQueue();
+  const [exporting, setExporting] = useState(false);
   const handleGenerateAndShare = async () => {
-    setShowExportModal(false);
-    const summaryText = [
-      logsConfig.summaryTitle,
-      `Office: ${activeStaff.officeShort} | Counter: ${counterWindow}`,
-      `Staff: ${activeStaff.staffName} (ID: ${activeStaff.staffId})`,
-      `Served by Me Today: ${servedByMeCount} | Office Completed: ${officeCompletedCount} | Skipped: ${skippedCount} | Avg Service: ${logsConfig.kpis.averageService}`,
-      `Export Format: ${exportFormat}`,
-    ].join('\n');
-
+    if (exporting) return;
+    setExporting(true);
     try {
-      await Share.share({
-        title: `CampusQueue_Shift_Summary.${exportFormat.toLowerCase()}`,
-        message: summaryText,
-      });
-      triggerHaptic('success');
-      showToast(`Shift summary exported as ${exportFormat}.`, 'matcha');
-    } catch {
-      showToast('Shift summary ready.', 'dark');
+      const date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+      const query = new URLSearchParams({ counter: counterWindow, format: exportFormat.toLowerCase(), startDate: date, endDate: date });
+      await shareReport(await staffDownload(query.toString()));
+      showToast('Shift report ready.', 'matcha');
+      setShowExportModal(false);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not export the shift.', 'warning');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -91,6 +87,7 @@ export default function StaffDailyLog() {
           <Text style={styles.exportHeaderBtnText}>Export</Text>
         </TouchableOpacity>
       </View>
+      {!!syncError && <Text accessibilityRole="button" onPress={() => void refresh()}>{syncError} Tap to retry.</Text>}
 
       <ScrollView
         style={styles.scrollContainer}
@@ -258,9 +255,10 @@ export default function StaffDailyLog() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.modalPrimaryButton}
+                disabled={exporting || !counterWindow}
                 onPress={handleGenerateAndShare}
               >
-                <Text style={styles.modalPrimaryText}>Share</Text>
+                <Text style={styles.modalPrimaryText}>{exporting ? 'Downloading…' : 'Share'}</Text>
               </TouchableOpacity>
             </View>
           </View>

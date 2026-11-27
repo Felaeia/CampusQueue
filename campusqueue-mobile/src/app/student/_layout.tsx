@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Redirect, Stack } from 'expo-router';
 
 import { FloatingBottomNav } from '../../components/FloatingBottomNav';
@@ -7,8 +7,9 @@ import { useQueue } from '../../context/QueueContext';
 import { Colors } from '../../theme/tokens';
 
 export default function StudentLayout() {
-  const { liveEnabled, liveRole } = useQueue();
-  if (liveEnabled && liveRole !== 'student') return <Redirect href="/auth/login" />;
+  const { restoring, liveRole } = useQueue();
+  if (restoring) return <ActivityIndicator accessibilityLabel="Restoring session" />;
+  if (liveRole !== 'student') return <Redirect href="/auth/login" />;
   return (
     <View style={styles.container}>
       <Stack

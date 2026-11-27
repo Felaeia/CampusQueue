@@ -6,11 +6,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { HistoryReceiptCard } from '../../components/history/HistoryReceiptCard';
 import { ReceiptDetailModal } from '../../components/history/ReceiptDetailModal';
 import { RequeueConfirmModal } from '../../components/history/RequeueConfirmModal';
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { HistoryFilterOption, HistoryTicket } from '../../types/queue';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 
 export default function StudentHistoryScreen() {
+  useQueueFocus('student');
   const router = useRouter();
   const {
     studentProfile,
@@ -18,8 +19,8 @@ export default function StudentHistoryScreen() {
     activeTickets,
     historyTickets,
     historyFilters,
-    historicalBasePassCount,
     issueTicket,
+    isMutating,
     showToast,
     triggerHaptic,
   } = useQueue();
@@ -35,7 +36,7 @@ export default function StudentHistoryScreen() {
     );
   }, [historyTickets, statusFilter]);
 
-  const totalPassesCount = historicalBasePassCount + historyTickets.length;
+  const totalPassesCount = historyTickets.length;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -132,9 +133,10 @@ export default function StudentHistoryScreen() {
         target={requeueTarget}
         waitingCount={
           requeueTarget
-            ? offices.find((o) => o.id === requeueTarget.officeId)?.waitingCount ?? 3
-            : 3
+            ? offices.find((o) => o.id === requeueTarget.officeId)?.waitingCount
+            : undefined
         }
+        busy={isMutating}
         onClose={() => setRequeueTarget(null)}
         onConfirm={async (target) => {
           const issued = await issueTicket({
@@ -142,8 +144,8 @@ export default function StudentHistoryScreen() {
             serviceName: target.service,
             notes: 'Re-queued from history',
           });
-          setRequeueTarget(null);
           if (issued) {
+            setRequeueTarget(null);
             router.replace('/student/ticket');
           }
         }}

@@ -1,5 +1,5 @@
 import { adminAuth, authApiUrl } from "./firebaseAdmin.ts";
-import { ApiError } from "./http.ts";
+import { ApiError, roleOf } from "./http.ts";
 
 export function firebaseWebKey(): string {
   const key = process.env.FIREBASE_WEB_API_KEY ?? (process.env.FIREBASE_AUTH_EMULATOR_HOST ? "demo-key" : undefined);
@@ -24,4 +24,15 @@ export async function newSession(uid: string, credentialVersion: number) {
   }
   const { idToken, refreshToken, expiresIn } = await response.json();
   return { idToken, refreshToken, expiresIn };
+}
+
+export function accountIdentity(profile: FirebaseFirestore.DocumentData, role: string) {
+  return {
+    account: { loginId: profile.loginId, fullName: profile.fullName },
+    ...(roleOf({ role }) === "staff" ? { staff: {
+      staffId: profile.staffId, staffName: profile.staffName, office: profile.office,
+      officeShort: profile.officeShort, officeId: profile.officeId, defaultCounterWindow: profile.defaultCounterWindow,
+      role: profile.role,
+    } } : {}),
+  };
 }
