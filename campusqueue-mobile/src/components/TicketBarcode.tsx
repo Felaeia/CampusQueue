@@ -1,7 +1,7 @@
 import React from 'react';
 import Svg, { Rect } from 'react-native-svg';
 
-import mockData from '../data/mockData.json';
+import { DEFAULT_BARCODE_WIDTHS } from '../constants/ui';
 import { Colors } from '../theme/tokens';
 
 interface TicketBarcodeProps {
@@ -10,8 +10,8 @@ interface TicketBarcodeProps {
 }
 
 export function TicketBarcode({
-  serial = 'CQ-2026-R042',
-  bars = mockData.barcodePattern,
+  serial = '',
+  bars = DEFAULT_BARCODE_WIDTHS,
 }: TicketBarcodeProps) {
   let cursor = 0;
 
@@ -21,7 +21,7 @@ export function TicketBarcode({
       height={16}
       viewBox="0 0 88 16"
       fill="none"
-      accessibilityLabel={`Barcode ${serial}`}
+      accessibilityLabel={serial ? `Barcode ${serial}` : 'Ticket barcode'}
     >
       {bars.map((w, idx) => {
         const x = cursor;

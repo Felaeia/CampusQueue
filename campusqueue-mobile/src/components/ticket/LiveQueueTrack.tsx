@@ -18,7 +18,9 @@ export function LiveQueueTrack({ ticket, isServing }: LiveQueueTrackProps) {
         <Text style={styles.aheadText}>
           {isServing
             ? 'Now serving you!'
-            : `${ticket.aheadCount} ${ticket.aheadCount === 1 ? 'student' : 'students'} ahead`}
+            : ticket.aheadCount === 0
+              ? 'Next in line'
+              : `${ticket.aheadCount} ${ticket.aheadCount === 1 ? 'student' : 'students'} ahead`}
         </Text>
       </View>
 
@@ -26,7 +28,7 @@ export function LiveQueueTrack({ ticket, isServing }: LiveQueueTrackProps) {
         {/* Station 1: SERVING */}
         <View style={styles.stationCol}>
           <View style={styles.servingPill}>
-            <Text style={styles.servingPillText}>{ticket.nowServing}</Text>
+            <Text style={styles.servingPillText}>{ticket.nowServing || '—'}</Text>
           </View>
           <Text style={styles.stationCaption}>SERVING</Text>
         </View>
