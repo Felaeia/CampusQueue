@@ -46,6 +46,7 @@ export default function StaffQueueDesk() {
     completeCurrent,
     sendRecall,
     skipCurrent,
+    cancelCurrent,
   } = useStaffQueue();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -137,11 +138,28 @@ export default function StaffQueueDesk() {
 
     if (nextTicket) {
       showToast(
-        `Ticket ${skippedNumber} skipped. Now serving ${nextTicket.ticketNumber}.`,
+        `Ticket ${skippedNumber} marked No-Show. Now serving ${nextTicket.ticketNumber}.`,
         'warning'
       );
     } else {
-      showToast(`Ticket ${skippedNumber} marked as skipped.`, 'warning');
+      showToast(`Ticket ${skippedNumber} marked No-Show.`, 'warning');
+    }
+  };
+
+  const handleCancelCurrent = async () => {
+    if (isMutating) return;
+    const { cancelledNumber, nextTicket } = await cancelCurrent(skipReason);
+    if (!cancelledNumber) return;
+    setShowSkipModal(false);
+    triggerHaptic('warning');
+
+    if (nextTicket) {
+      showToast(
+        `Ticket ${cancelledNumber} cancelled. Now serving ${nextTicket.ticketNumber}.`,
+        'warning'
+      );
+    } else {
+      showToast(`Ticket ${cancelledNumber} cancelled and archived.`, 'warning');
     }
   };
 
@@ -659,13 +677,21 @@ export default function StaffQueueDesk() {
               style={[styles.modalPrimary, styles.dangerPrimary]}
               onPress={handleSkipCurrent}
             >
-              <Text style={styles.dangerPrimaryText}>Confirm skip</Text>
+              <Text style={styles.dangerPrimaryText}>Mark No-Show &amp; Advance</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondary}
+              onPress={handleCancelCurrent}
+            >
+              <Text style={[styles.modalSecondaryText, { color: Colors.danger }]}>
+                Cancel Ticket &amp; Advance
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.modalSecondary}
               onPress={() => setShowSkipModal(false)}
             >
-              <Text style={styles.modalSecondaryText}>Cancel</Text>
+              <Text style={styles.modalSecondaryText}>Keep Serving</Text>
             </TouchableOpacity>
           </View>
         </View>

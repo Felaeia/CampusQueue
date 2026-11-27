@@ -981,13 +981,26 @@ export function useLiveQueue(
           });
         }
 
+        if (action === 'cancel') {
+          if (!ticket) throw new Error('No active ticket to cancel.');
+          return mutate<{ ticketId?: string | null; ticket?: StaffQueueTicket | null }>('staff', {
+            action: 'cancel',
+            counter: activeCounter,
+            ticketId: ticket.id,
+            advance: data.advance !== false,
+            ...(typeof data.reason === 'string' && data.reason.trim()
+              ? { reason: data.reason.trim() }
+              : {}),
+          });
+        }
+
         if (action === 'skip' || action === 'no-show') {
-          if (!ticket) throw new Error('No active ticket to skip.');
+          if (!ticket) throw new Error('No active ticket to mark as no-show.');
           const payload = {
             action: 'no-show',
             counter: activeCounter,
             ticketId: ticket.id,
-            advance: true,
+            advance: data.advance !== false,
             ...(typeof data.reason === 'string' && data.reason.trim()
               ? { reason: data.reason.trim() }
               : {}),
