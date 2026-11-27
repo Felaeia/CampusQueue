@@ -31,7 +31,7 @@ export default function AdminOfficesScreen() {
     offices,
     isLoadingLive,
     hasLoadedLive,
-    liveError,
+    officesError,
     refreshAdminData,
     toggleOfficeStatus,
     toggleServiceStatus,
@@ -108,7 +108,7 @@ export default function AdminOfficesScreen() {
           />
         }
       >
-        {liveError ? (
+        {officesError ? (
           <Pressable
             onPress={() => {
               triggerHaptic('light');
@@ -119,7 +119,7 @@ export default function AdminOfficesScreen() {
             <Feather name="alert-triangle" size={16} color={Colors.danger} />
             <View style={styles.flex}>
               <Text style={styles.errorCardTitle}>Unable to sync campus offices.</Text>
-              <Text style={styles.errorCardSub}>Tap to retry.</Text>
+              <Text style={styles.errorCardSub}>{officesError} Tap to retry.</Text>
             </View>
           </Pressable>
         ) : null}

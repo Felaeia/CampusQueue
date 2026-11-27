@@ -146,6 +146,8 @@ export interface AdminContextValue {
   isLoadingLogs: boolean;
   hasLoadedLive: boolean;
   liveError: string | null;
+  officesError: string | null;
+  usersError: string | null;
   logsError: string | null;
   logoutAdmin: () => void;
   refreshAdminData: (range?: AdminDateRange, silent?: boolean) => Promise<void>;
@@ -260,6 +262,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [hasLoadedLive, setHasLoadedLive] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [officesError, setOfficesError] = useState<string | null>(null);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [offices, setOffices] = useState<AdminOfficeRecord[]>([]);
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
@@ -375,17 +379,31 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         const logDocs =
           logsSettled.status === 'fulfilled' ? logsSettled.value : [];
 
-        const coreSettled = [officesSettled, staffSettled, studentsSettled, analyticsSettled];
-        const firstRejection = [...coreSettled, logsSettled].find((r) => r.status === 'rejected');
-        if (firstRejection && firstRejection.status === 'rejected') {
+        const extractReason = (res: PromiseSettledResult<unknown>, fallback: string) =>
+          res.status === 'rejected'
+            ? res.reason instanceof Error
+              ? res.reason.message
+              : fallback
+            : null;
+
+        const nextOfficesErr = extractReason(officesSettled, 'Unable to sync campus offices.');
+        const nextUsersErr =
+          extractReason(staffSettled, 'Unable to sync staff directory.') ??
+          extractReason(studentsSettled, 'Unable to sync student directory.');
+        const nextAnalyticsErr = extractReason(analyticsSettled, 'Unable to sync campus telemetry.');
+        const nextLogsErr = extractReason(logsSettled, 'Unable to sync activity logs.');
+
+        setOfficesError(nextOfficesErr);
+        setUsersError(nextUsersErr);
+        if (nextLogsErr) setLogsError(nextLogsErr);
+
+        const coreErr = nextOfficesErr ?? nextAnalyticsErr;
+        if (coreErr || nextUsersErr || nextLogsErr) {
           consecutiveFailuresRef.current += 1;
-          const reason = firstRejection.reason;
-          setLiveError(
-            reason instanceof Error ? reason.message : 'Unable to sync campus telemetry.'
-          );
         } else {
           consecutiveFailuresRef.current = 0;
         }
+        setLiveError(coreErr);
 
         const staffByUid = new Map(staffDocs.map((doc) => [doc.id, doc]));
         staffByUidRef.current = staffByUid;
@@ -665,6 +683,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     setIsLoadingLive(false);
     setIsLoadingLogs(false);
     setLiveError(null);
+    setOfficesError(null);
+    setUsersError(null);
     setLogsError(null);
     setOffices([]);
     setUsers([]);
@@ -1062,6 +1082,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       isLoadingLogs,
       hasLoadedLive,
       liveError,
+      officesError,
+      usersError,
       logsError,
       logoutAdmin,
       refreshAdminData,
@@ -1099,6 +1121,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       logsError,
       logoutAdmin,
       offices,
+      officesError,
       provisionUser,
       refreshAdminData,
       resetOfficeSequence,
@@ -1111,6 +1134,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       toggleServiceStatus,
       updateStaffAssignment,
       users,
+      usersError,
     ]
   );
 
