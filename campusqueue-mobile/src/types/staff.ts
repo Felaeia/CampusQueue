@@ -1,6 +1,6 @@
 export type DeskStatus = 'online' | 'break' | 'closed';
 
-export type LogOutcome = 'Completed' | 'Skipped';
+export type LogOutcome = 'Completed' | 'Skipped' | 'Cancelled';
 
 export type LogFilterTab = 'My Counter Only' | 'All Office Counters' | 'Skipped Only';
 

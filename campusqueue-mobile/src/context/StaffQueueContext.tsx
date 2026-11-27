@@ -36,6 +36,7 @@ export interface StaffQueueContextValue {
   completeCurrent: ReturnType<typeof useQueue>['staffCompleteCurrent'];
   sendRecall: ReturnType<typeof useQueue>['staffSendRecall'];
   skipCurrent: ReturnType<typeof useQueue>['staffSkipCurrent'];
+  cancelCurrent: ReturnType<typeof useQueue>['staffCancelCurrent'];
   requeueTicket: ReturnType<typeof useQueue>['staffRequeueTicket'];
   downloadShiftReport: ReturnType<typeof useQueue>['downloadStaffShiftReport'];
 }
@@ -74,6 +75,7 @@ export function useStaffQueue(): StaffQueueContextValue {
     completeCurrent: queue.staffCompleteCurrent,
     sendRecall: queue.staffSendRecall,
     skipCurrent: queue.staffSkipCurrent,
+    cancelCurrent: queue.staffCancelCurrent,
     requeueTicket: queue.staffRequeueTicket,
     downloadShiftReport: queue.downloadStaffShiftReport,
   };

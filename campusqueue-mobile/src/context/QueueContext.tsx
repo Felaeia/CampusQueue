@@ -162,6 +162,9 @@ export interface QueueContextValue {
   staffSkipCurrent: (
     reason?: string
   ) => Promise<{ skippedNumber?: string; nextTicket?: StaffQueueTicket }>;
+  staffCancelCurrent: (
+    reason?: string
+  ) => Promise<{ cancelledNumber?: string; nextTicket?: StaffQueueTicket }>;
   staffRequeueTicket: (ticketId: string) => Promise<boolean>;
 }
 
@@ -375,6 +378,16 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       return response
         ? {
             skippedNumber: previousNumber,
+            nextTicket: response.desk?.servingTicket ?? undefined,
+          }
+        : {};
+    },
+    staffCancelCurrent: async (reason?: string) => {
+      const previousNumber = live.desk?.servingTicket?.ticketNumber;
+      const response = await live.deskAction('cancel', { reason, advance: true });
+      return response
+        ? {
+            cancelledNumber: previousNumber,
             nextTicket: response.desk?.servingTicket ?? undefined,
           }
         : {};
