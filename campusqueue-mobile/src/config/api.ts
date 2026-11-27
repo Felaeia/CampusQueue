@@ -26,8 +26,9 @@ const configuredUrl = normalizeBaseUrl(
 export const API_BASE_URL = configuredUrl || PRODUCTION_API_URL;
 
 export const API_POLLING_INTERVAL_MS = 4000;
+export const API_MAX_BACKOFF_MS = 30000;
 export const ADMIN_POLLING_INTERVAL_MS = 10000;
-export const REQUEST_TIMEOUT_MS = 15000;
+export const REQUEST_TIMEOUT_MS = 25000;
 
 export function apiUrl(path: string): string {
   const cleanPath = path.replace(/^\/+/, '').replace(/^api\//i, '');
