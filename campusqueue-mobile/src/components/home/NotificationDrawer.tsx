@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 
 import { NotificationItem } from '../../types/queue';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
+import { formatDisplayTimestamp } from '../../utils/waitTime';
 
 interface NotificationDrawerProps {
   visible: boolean;
@@ -55,26 +56,37 @@ export function NotificationDrawer({
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
           >
-            {notifications.map((item) => (
-              <Pressable
-                key={item.id}
-                onPress={() => onPressNotification(item)}
-                style={({ pressed }) => [styles.itemCard, pressed && styles.pressed]}
-              >
-                <View style={styles.itemTopRow}>
-                  <View style={styles.itemTitleRow}>
-                    {!item.read ? (
-                      <View style={[styles.unreadDot, { backgroundColor: item.dotColor }]} />
-                    ) : null}
-                    <Text style={styles.itemTitle} numberOfLines={1}>
-                      {item.title}
+            {notifications.length === 0 ? (
+              <View style={styles.itemCard}>
+                <Text style={styles.itemTitle}>No notifications yet</Text>
+                <Text style={styles.itemMessage}>
+                  Queue alerts, recalls, and turn updates will appear here.
+                </Text>
+              </View>
+            ) : (
+              notifications.map((item) => (
+                <Pressable
+                  key={item.id}
+                  onPress={() => onPressNotification(item)}
+                  style={({ pressed }) => [styles.itemCard, pressed && styles.pressed]}
+                >
+                  <View style={styles.itemTopRow}>
+                    <View style={styles.itemTitleRow}>
+                      {!item.read ? (
+                        <View style={[styles.unreadDot, { backgroundColor: item.dotColor }]} />
+                      ) : null}
+                      <Text style={styles.itemTitle} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                    </View>
+                    <Text style={styles.itemTime}>
+                      {formatDisplayTimestamp(item.time, 'short')}
                     </Text>
                   </View>
-                  <Text style={styles.itemTime}>{item.time}</Text>
-                </View>
-                <Text style={styles.itemMessage}>{item.message}</Text>
-              </Pressable>
-            ))}
+                  <Text style={styles.itemMessage}>{item.message}</Text>
+                </Pressable>
+              ))
+            )}
           </ScrollView>
         </View>
       </View>

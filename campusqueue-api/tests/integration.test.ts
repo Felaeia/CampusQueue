@@ -54,6 +54,14 @@ const secondStudentId = "student-two-" + suffix;
 const secondStaffId = "staff-two-" + suffix;
 const secret = randomUUID();
 const counter = "Window 1";
+const registrar = () => adminDb().collection("offices").doc("registrar");
+const setRegistrarCounters = async (status: "online" | "break") => {
+  const batch = adminDb().batch();
+  for (const id of ["Window 1", "Window 2", "Window 3"]) {
+    batch.update(registrar().collection("counters").doc(id), { status });
+  }
+  await batch.commit();
+};
 type Tokens = { idToken: string; refreshToken: string; role: string };
 
 before(async () => {
@@ -115,6 +123,7 @@ test("login, scoped queue lifecycle, reports, and session revocation", async () 
   const issue = (requestId: string) => api<{ ticket: Ticket }>("student", {
     token, data: { action: "issue", officeId: "registrar", serviceName, requestId },
   });
+  await setRegistrarCounters("break");
   const sameRequest = randomUUID();
   const duplicate = await Promise.all([issue(sameRequest), issue(sameRequest)]);
   const { ticket } = duplicate[0];
@@ -130,14 +139,14 @@ test("login, scoped queue lifecycle, reports, and session revocation", async () 
   const deskAction = (action: string, extra: object = {}) => api<{ ticketId: string; recallCount?: number }>("staff", {
     token: staffToken, data: { action, counter, ...extra },
   });
-  assert.equal((await deskAction("call-next")).ticketId, ticket.id);
+  assert.equal((await deskAction("status", { status: "online" })).ticketId, ticket.id);
   const active = await api<{ activeTickets: Ticket[] }>("student?view=active", { token });
-  assert.equal(active.activeTickets[0]?.lifecycleStatus, "called");
+  assert.equal(active.activeTickets[0]?.lifecycleStatus, "serving");
   assert.equal("historyTickets" in active, false);
   assert.equal((await deskAction("recall", { ticketId: ticket.id, recallCount: 0 })).recallCount, 1);
   await api("student", { token, data: { action: "acknowledge", ticketId: ticket.id } });
   await api("staff", { token: staffToken, data: { action: "verify", counter, qrPayload: ticket.qrPayload } });
-  await assert.rejects(deskAction("complete", { ticketId: ticket.id }), rejectsStatus(409));
+  await api("staff", { token: staffToken, data: { action: "verify", counter, qrPayload: ticket.qrPayload } });
   await deskAction("start", { ticketId: ticket.id });
   await deskAction("complete", { ticketId: ticket.id, advance: false });
   assert.equal((await studentView()).historyTickets[0]?.status, "Completed");
@@ -147,6 +156,7 @@ test("login, scoped queue lifecycle, reports, and session revocation", async () 
   await api("student", { token, data: { action: "read-all" } });
   assert.ok((await studentView()).notifications.every((item) => item.read));
 
+  await setRegistrarCounters("break");
   const second = await issue(randomUUID());
   await api("student", { token, data: { action: "cancel", ticketId: second.ticket.id, reason: "Integration test" } });
   assert.ok((await studentView()).historyTickets.some((item) => item.status === "Cancelled"));
@@ -162,13 +172,44 @@ test("login, scoped queue lifecycle, reports, and session revocation", async () 
     api<{ ticketId: string }>("staff", { token: otherStaff.idToken,
       data: { action, counter: "Window 3", ...(ticketId ? { ticketId } : {}) },
     });
+  await setRegistrarCounters("online");
   const [leftCall, rightCall] = await Promise.all([deskAction("call-next"), otherDeskAction("call-next")]);
   assert.notEqual(leftCall.ticketId, rightCall.ticketId);
   assert.deepEqual(new Set([leftCall.ticketId, rightCall.ticketId]), new Set([left.ticket.id, right.ticket.id]));
   await deskAction("start", { ticketId: leftCall.ticketId });
-  await deskAction("complete", { ticketId: leftCall.ticketId });
+  await deskAction("complete", { ticketId: leftCall.ticketId, advance: false });
   await otherDeskAction("start", rightCall.ticketId);
   await otherDeskAction("complete", rightCall.ticketId);
+
+  await setRegistrarCounters("break");
+  await deskAction("status", { status: "online" });
+  const promoted = await issue(randomUUID());
+  assert.equal((await api<{ servingTicket: Ticket }>("staff", { token: staffToken })).servingTicket.id, promoted.ticket.id);
+  await assert.rejects(deskAction("no-show", { ticketId: promoted.ticket.id }), rejectsStatus(409));
+  await deskAction("cancel", { ticketId: promoted.ticket.id, reason: "Cancelled by staff", advance: false });
+  assert.ok((await studentView()).historyTickets.some((item) => item.status === "Cancelled"));
+  await assert.rejects(api("staff", { token: staffToken, data: {
+    action: "verify", counter, qrPayload: promoted.ticket.qrPayload,
+  } }), rejectsStatus(409));
+
+  const requeue = await issue(randomUUID());
+  await registrar().update({ graceMinutes: 1, requeueLimit: 1, requeuePlacement: "tail" });
+  await adminDb().collection("tickets").doc(requeue.ticket.id).update({
+    calledAt: new Date(Date.now() - 120_000).toISOString(),
+  });
+  await deskAction("no-show", { ticketId: requeue.ticket.id, advance: false });
+  await deskAction("requeue", { ticketId: requeue.ticket.id });
+  const queuedAgain = (await studentView()).activeTickets[0];
+  assert.equal(queuedAgain?.id, requeue.ticket.id);
+  assert.notEqual(queuedAgain?.qrPayload, requeue.ticket.qrPayload);
+  await assert.rejects(api("staff", { token: staffToken, data: {
+    action: "verify", counter, qrPayload: requeue.ticket.qrPayload,
+  } }), rejectsStatus(404));
+  // A read must not advance a requeued ticket, allowing an explicit scan or call.
+  assert.equal((await api<{ servingTicket: Ticket | null }>("staff", { token: staffToken })).servingTicket, null);
+  assert.ok(queuedAgain);
+  await api("staff", { token: staffToken, data: { action: "verify", counter, qrPayload: queuedAgain.qrPayload } });
+  await deskAction("complete", { ticketId: queuedAgain.id, advance: false });
 
   const officeId = "integration-" + suffix;
   await api("admin?resource=offices", { token: adminToken, data: {

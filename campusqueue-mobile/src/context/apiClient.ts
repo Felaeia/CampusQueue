@@ -8,7 +8,6 @@ export class ApiResponseError extends Error {
   }
 }
 
-export const configuredApiUrl = process.env.EXPO_PUBLIC_CAMPUSQUEUE_API_URL;
 const timeoutMs = 12000;
 const allowedServerError = new Set([400, 401, 403, 404, 409, 422, 429]);
 

@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,17 +19,25 @@ import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 import { LogFilterTab, ProcessedTransaction } from '../../types/staff';
+import { formatDisplayTimestamp } from '../../utils/waitTime';
 
 export default function StaffDailyLog() {
   useQueueFocus('logs');
-  const { showToast } = useQueue();
+  const { showToast, triggerHaptic } = useQueue();
   const {
-    logsConfig,
+    activeStaff,
+    logFilters,
+    averageServiceLabel,
     counterWindow,
     transactions,
     servedByMeCount,
     officeCompletedCount,
     skippedCount,
+    isSyncing,
+    isMutating,
+    refreshDesk,
+    requeueTicket,
+    downloadShiftReport,
   } = useStaffQueue();
 
   const [activeFilter, setActiveFilter] = useState<LogFilterTab>('My Counter Only');
@@ -35,6 +45,11 @@ export default function StaffDailyLog() {
   const [selectedTx, setSelectedTx] = useState<ProcessedTransaction | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState<'CSV' | 'PDF'>('CSV');
+  const [isExporting, setIsExporting] = useState(false);
+
+
+  const officeDisplayName = activeStaff.officeShort || activeStaff.office || 'Campus Office';
+  const officeBadgeLabel = officeDisplayName.replace(/\s*Office$/i, '').toUpperCase();
 
   const filteredLogs = useMemo(() => {
     return transactions.filter((item) => {
@@ -51,21 +66,31 @@ export default function StaffDailyLog() {
     });
   }, [activeFilter, counterWindow, searchQuery, transactions]);
 
-  const { staffDownload, syncError, refresh } = useQueue();
-  const [exporting, setExporting] = useState(false);
   const handleGenerateAndShare = async () => {
-    if (exporting) return;
-    setExporting(true);
+    if (isExporting) return;
+    setIsExporting(true);
     try {
-      const date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
-      const query = new URLSearchParams({ counter: counterWindow, format: exportFormat.toLowerCase(), startDate: date, endDate: date });
-      await shareReport(await staffDownload(query.toString()));
-      showToast('Shift report ready.', 'matcha');
+      const liveExport = await downloadShiftReport(exportFormat.toLowerCase() as 'csv' | 'pdf');
       setShowExportModal(false);
+      await shareReport(liveExport);
+      triggerHaptic('success');
+      showToast(`Shift summary exported as ${exportFormat}.`, 'matcha');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not export the shift.', 'warning');
+      setShowExportModal(false);
+      showToast(
+        error instanceof Error ? error.message : 'Unable to export shift report.',
+        'warning'
+      );
     } finally {
-      setExporting(false);
+      setIsExporting(false);
+    }
+  };
+
+  const handleRequeue = async (tx: ProcessedTransaction) => {
+    const ticketId = tx.ticketId ?? tx.id.replace(/-no-show-\d+$/, '');
+    const ok = await requeueTicket(ticketId);
+    if (ok) {
+      setSelectedTx(null);
     }
   };
 
@@ -76,7 +101,7 @@ export default function StaffDailyLog() {
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Daily Queue Log</Text>
-          <Text style={styles.headerSub}>{logsConfig.office} - Today&apos;s Shift</Text>
+          <Text style={styles.headerSub}>{officeDisplayName} - Today&apos;s Shift</Text>
         </View>
         <TouchableOpacity
           style={styles.exportHeaderBtn}
@@ -87,12 +112,20 @@ export default function StaffDailyLog() {
           <Text style={styles.exportHeaderBtnText}>Export</Text>
         </TouchableOpacity>
       </View>
-      {!!syncError && <Text accessibilityRole="button" onPress={() => void refresh()}>{syncError} Tap to retry.</Text>}
 
       <ScrollView
         style={styles.scrollContainer}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncing}
+            onRefresh={() => {
+              void refreshDesk(true);
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         <View style={styles.kpiGrid}>
           <View style={[styles.kpiCard, styles.kpiCardDark]}>
@@ -112,8 +145,8 @@ export default function StaffDailyLog() {
           </View>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>AVG. SERVICE TIME</Text>
-            <Text style={styles.kpiValue}>{logsConfig.kpis.averageService}</Text>
-            <Text style={styles.kpiHint}>Target: &lt; 06m 00s</Text>
+            <Text style={styles.kpiValue}>{averageServiceLabel}</Text>
+            <Text style={styles.kpiHint}>Live shift average</Text>
           </View>
         </View>
 
@@ -122,7 +155,7 @@ export default function StaffDailyLog() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.chipRow}
         >
-          {logsConfig.filterTabs.map((tab) => {
+          {logFilters.map((tab) => {
             const active = activeFilter === tab;
             return (
               <TouchableOpacity
@@ -174,7 +207,7 @@ export default function StaffDailyLog() {
               >
                 <View style={styles.ticketTopRow}>
                   <View style={styles.officeTag}>
-                    <Text style={styles.officeTagText}>REGISTRAR</Text>
+                    <Text style={styles.officeTagText}>{officeBadgeLabel}</Text>
                   </View>
                   <View
                     style={[
@@ -255,10 +288,14 @@ export default function StaffDailyLog() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.modalPrimaryButton}
-                disabled={exporting || !counterWindow}
                 onPress={handleGenerateAndShare}
+                disabled={isExporting}
               >
-                <Text style={styles.modalPrimaryText}>{exporting ? 'Downloading…' : 'Share'}</Text>
+                {isExporting ? (
+                  <ActivityIndicator size="small" color={Colors.matcha} />
+                ) : (
+                  <Text style={styles.modalPrimaryText}>Share</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -287,12 +324,15 @@ export default function StaffDailyLog() {
               {[
                 ['USN', selectedTx.usn],
                 ['Service', selectedTx.serviceType],
-                ['Issued', selectedTx.issuedAt],
-                ['Called', selectedTx.calledAt],
+                ['Issued', formatDisplayTimestamp(selectedTx.issuedAt, 'short')],
+                ['Called', formatDisplayTimestamp(selectedTx.calledAt, 'short')],
                 ...(selectedTx.verifiedAt
-                  ? ([['Verified', selectedTx.verifiedAt]] as [string, string][])
+                  ? ([['Verified', formatDisplayTimestamp(selectedTx.verifiedAt, 'short')]] as [
+                      string,
+                      string,
+                    ][])
                   : []),
-                ['Closed', selectedTx.closedAt],
+                ['Closed', formatDisplayTimestamp(selectedTx.closedAt, 'short')],
               ].map(([label, value]) => (
                 <View key={label} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{label}</Text>
@@ -305,6 +345,19 @@ export default function StaffDailyLog() {
                   <Text style={styles.detailValue}>{selectedTx.remarks}</Text>
                 </View>
               )}
+              {selectedTx.lifecycleStatus === 'no_show' ? (
+                <TouchableOpacity
+                  style={[styles.modalPrimaryButton, { marginTop: 14, alignItems: 'center' }]}
+                  onPress={() => {
+                    void handleRequeue(selectedTx);
+                  }}
+                  disabled={isMutating}
+                >
+                  <Text style={styles.modalPrimaryText}>
+                    {isMutating ? 'Requeueing...' : 'Requeue Ticket'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           )}
         </View>

@@ -2,18 +2,20 @@ export type OfficeId = string;
 
 export type ActiveTicketStatus = 'waiting' | 'serving';
 
+export type TicketLifecycleStatus =
+  | 'waiting'
+  | 'called'
+  | 'serving'
+  | 'Completed'
+  | 'Cancelled'
+  | 'Skipped'
+  | 'no_show';
+
 export type HistoryTicketStatus = 'Completed' | 'Skipped' | 'Cancelled';
 
 export type HistoryFilterOption = 'All' | HistoryTicketStatus;
 
 export type ToastTone = 'dark' | 'matcha' | 'warning';
-
-export interface AuthDefaults {
-  defaultUsn: string;
-  defaultStudentId: string;
-  defaultPassword: string;
-  minPasswordLength: number;
-}
 
 export interface StudentProfile {
   fullName: string;
@@ -35,6 +37,8 @@ export interface OfficeService {
   name: string;
   duration: number;
   docs: string;
+  description?: string;
+  available?: boolean;
 }
 
 export interface Office {
@@ -51,8 +55,10 @@ export interface Office {
   themeColor: string;
   crowdPillBg: string;
   crowdPillText: string;
-  services: OfficeService[];
   acceptingTickets?: boolean;
+  description?: string;
+  estWaitMins?: number;
+  services: OfficeService[];
 }
 
 export interface ActiveTicket {
@@ -64,14 +70,20 @@ export interface ActiveTicket {
   shortOffice: string;
   counter: string;
   status: ActiveTicketStatus;
-  lifecycleStatus?: 'waiting' | 'called' | 'serving';
-  acknowledgedAt?: string;
+  lifecycleStatus?: TicketLifecycleStatus;
   service: string;
+  serviceId?: string;
   holderShort: string;
   studentUsn: string;
   serial: string;
   qrPayload: string;
   issuedAt: string;
+  calledAt?: string | null;
+  startedAt?: string | null;
+  acknowledgedAt?: string | null;
+  isQrVerified?: boolean;
+  recallCount?: number;
+  requeueCount?: number;
   estWaitMins: number;
   aheadCount: number;
   nowServing: string;
@@ -86,6 +98,7 @@ export interface HistoryTicket {
   officeName: string;
   service: string;
   status: HistoryTicketStatus;
+  lifecycleStatus?: string;
   timestamp: string;
   issuedAt: string;
   calledAt: string;
@@ -101,6 +114,8 @@ export interface NotificationItem {
   time: string;
   read: boolean;
   dotColor: string;
+  ticketId?: string;
+  kind?: string;
 }
 
 export interface ToastMessage {
@@ -111,30 +126,8 @@ export interface ToastMessage {
 
 export interface IssueTicketInput {
   officeId: OfficeId;
+  serviceId?: string;
   serviceName: string;
   notes?: string;
-}
-
-export interface StudentAccountSeed {
-  profile: StudentProfile;
-  password: string;
-  mustChangePassword: boolean;
-  historicalBasePassCount: number;
-  activeTickets: ActiveTicket[];
-  historyTickets: HistoryTicket[];
-  notifications: NotificationItem[];
-}
-
-export interface MockDataBundle {
-  authDefaults: AuthDefaults;
-  studentProfile: StudentProfile;
-  studentAccounts: StudentAccountSeed[];
-  offices: Office[];
-  activeTickets: ActiveTicket[];
-  historyTickets: HistoryTicket[];
-  notifications: NotificationItem[];
-  cancelReasons: string[];
-  historyFilters: HistoryFilterOption[];
-  historicalBasePassCount: number;
-  barcodePattern: number[];
+  requestId?: string;
 }

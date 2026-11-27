@@ -7,9 +7,12 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 
 import type { ApiDownload } from './apiClient';
+import { ADMIN_POLLING_INTERVAL_MS } from '../config/api';
 import {
+  AdminAccount,
   AdminAuditRecord,
   AdminBroadcastRecord,
   AdminDateRange,
@@ -23,16 +26,8 @@ import {
   SaveServiceInput,
   SendBroadcastInput,
 } from '../types/admin';
+import { calculateEstimatedWaitMinutes, manilaDateString } from '../utils/waitTime';
 import { useQueue } from './QueueContext';
-
-// Demo accounts, KPIs and audit records are disabled. The original fixture is retained in src/data.
-
-const noBroadcasts: AdminBroadcastRecord[] = [];
-
-export function manilaDateString(offsetDays = 0): string {
-  const manilaMs = Date.now() + 8 * 60 * 60 * 1000 + offsetDays * 86_400_000;
-  return new Date(manilaMs).toISOString().slice(0, 10);
-}
 
 function rangeToDates(range: AdminDateRange): { startDate: string; endDate: string } {
   const today = manilaDateString(0);
@@ -49,7 +44,8 @@ function rangeToDates(range: AdminDateRange): { startDate: string; endDate: stri
   return { startDate: today, endDate: today };
 }
 
-// Live API response shapes
+
+
 interface LiveOfficeDoc {
   id: string;
   name?: string;
@@ -59,6 +55,7 @@ interface LiveOfficeDoc {
   acceptingTickets?: boolean;
   waitingCount?: number;
   lastIssuedNumber?: number;
+  nowServing?: string;
   themeColor?: string;
   services?: { id: string; name: string; duration?: number; docs?: string; available?: boolean }[];
 }
@@ -67,6 +64,7 @@ interface LiveCounterDoc {
   id: string;
   name?: string;
   status?: 'online' | 'break' | 'closed';
+  assignedStaffUid?: string | null;
   staffName?: string;
   staffId?: string;
 }
@@ -84,6 +82,7 @@ interface LiveAccountDoc {
   archivedAt?: unknown;
   officeId?: string;
   office?: string;
+  counterIds?: string[];
   defaultCounterWindow?: string;
   program?: string;
   yearLevel?: string;
@@ -111,6 +110,11 @@ interface LiveAnalyticsResponse {
       waiting: number;
       averageWaitMinutes: number | null;
     }[];
+    requestType?: {
+      id: string;
+      label: string;
+      waiting: number;
+    }[];
     date: { id: string; label: string; issued: number }[];
   };
 }
@@ -123,6 +127,7 @@ interface LiveActivityLogDoc {
   officeId?: string;
   targetId?: string;
   ticketId?: string;
+  outcome?: string;
   details?: Record<string, unknown>;
 }
 
@@ -131,13 +136,22 @@ export interface ActionResult {
   error?: string;
 }
 
-export type MaybePromise<T> = T | Promise<T>;
-
 export interface AdminContextValue {
-  activeAdmin: { fullName: string; adminId: string };
+  activeAdmin: AdminAccount;
   isLoadingLive: boolean;
+  isLoadingLogs: boolean;
+  hasLoadedLive: boolean;
   liveError: string | null;
-  refreshAdminData: (range?: AdminDateRange) => Promise<void>;
+  officesError: string | null;
+  usersError: string | null;
+  logsError: string | null;
+  logoutAdmin: () => void;
+  refreshAdminData: (range?: AdminDateRange, silent?: boolean) => Promise<void>;
+  fetchLiveAuditLogs: (
+    startDate: string,
+    endDate: string,
+    officeId?: string
+  ) => Promise<void>;
 
   // Overview & Broadcasts
   getKpiSnapshot: (range: AdminDateRange) => AdminKpiSnapshot;
@@ -148,26 +162,26 @@ export interface AdminContextValue {
 
   // Offices & Services
   offices: AdminOfficeRecord[];
-  toggleOfficeStatus: (officeId: string) => MaybePromise<void>;
-  toggleServiceStatus: (officeId: string, serviceId: string) => MaybePromise<void>;
-  saveOffice: (input: SaveOfficeInput) => MaybePromise<ActionResult>;
-  saveService: (officeId: string, input: SaveServiceInput) => MaybePromise<ActionResult>;
+  toggleOfficeStatus: (officeId: string) => Promise<void>;
+  toggleServiceStatus: (officeId: string, serviceId: string) => Promise<void>;
+  saveOffice: (input: SaveOfficeInput) => Promise<ActionResult>;
+  saveService: (officeId: string, input: SaveServiceInput) => Promise<ActionResult>;
   resetOfficeSequence: (officeId: string) => ActionResult;
 
   // Users & Roles
   users: AdminUserRecord[];
   directoryTotalBadges: { staff: number; students: number; admins: number };
-  provisionUser: (input: ProvisionUserInput) => MaybePromise<ActionResult>;
+  provisionUser: (input: ProvisionUserInput & { password?: string }) => Promise<ActionResult>;
   updateStaffAssignment: (
     userId: string,
     officeId: string,
     defaultWindow: string
-  ) => MaybePromise<ActionResult>;
-  resetUserPassword: (userId: string, password: string) => MaybePromise<ActionResult>;
-  toggleAccountStatus: (userId: string) => MaybePromise<ActionResult>;
+  ) => Promise<ActionResult>;
+  resetUserPassword: (userId: string, newPassword?: string) => Promise<ActionResult>;
+  toggleAccountStatus: (userId: string) => Promise<ActionResult>;
 
   // Audit Reports
-  loadAuditRecords: (startDate: string, endDate: string, officeId?: string) => Promise<AdminAuditRecord[]>;
+  auditRecords: AdminAuditRecord[];
   downloadAnalyticsReport: (
     startDate: string,
     endDate: string,
@@ -178,116 +192,323 @@ export interface AdminContextValue {
 
 const AdminContext = createContext<AdminContextValue | null>(null);
 
-export function AdminProvider({ children }: { children: React.ReactNode }) {
+function mapActivityLogsToAuditRecords(
+  items: LiveActivityLogDoc[],
+  officeNameById: Map<string, string>,
+  staffByUid: Map<string, LiveAccountDoc>
+): AdminAuditRecord[] {
+  return items.map((log) => {
+    const created = new Date(log.createdAt);
+    const dateKey = log.createdAt.slice(0, 10);
+    const timeLabel = Number.isFinite(created.valueOf())
+      ? created.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+      : log.createdAt;
+    const actionText = (log.action || 'event').toLowerCase();
+    const outcome = actionText === 'ticket_cancelled'
+      ? 'Cancelled'
+      : actionText === 'ticket_skipped' || actionText === 'ticket_no_show'
+        ? 'Skipped'
+        : actionText === 'service_completed' ? 'Completed' : 'Activity';
+    const actorAccount = log.actorId ? staffByUid.get(log.actorId) : undefined;
+    const actorIdentifier =
+      actorAccount?.loginId || actorAccount?.staffId || log.actorId || 'system';
+    const actorName = actorAccount?.fullName || actorAccount?.staffName || actorIdentifier;
 
+    return {
+      id: log.id,
+      documentId: `activityLogs/${log.id}`,
+      ticketCode: log.ticketId || '—',
+      dateKey,
+      dateTimeLabel: `${dateKey} • ${timeLabel}`,
+      officeId: log.officeId || 'campus',
+      officeName:
+        (log.officeId && officeNameById.get(log.officeId)) || log.officeId || 'Campus-Wide',
+      serviceName: (log.action || 'System Event').replace(/_/g, ' '),
+      studentName: String(log.details?.studentName ?? '—'),
+      studentUsn: String(log.details?.usn ?? '—'),
+      outcome,
+      issuedAt: '—',
+      approachingAlertAt: '—',
+      calledAt: '—',
+      qrVerifiedAt: '—',
+      closedAt: outcome === 'Activity' ? '—' : timeLabel,
+      waitDurationSeconds: 0,
+      serviceDurationSeconds: 0,
+      waitDurationLabel: '—',
+      serviceDurationLabel: '—',
+      verificationMethod: '—',
+      handledByStaffId: actorIdentifier,
+      handledByStaffName: actorName,
+      counterWindow: String(log.details?.counter ?? log.outcome ?? '—'),
+    };
+  });
+}
+
+export function AdminProvider({ children }: { children: React.ReactNode }) {
   const {
-    adminIdentity,
     liveRole,
+    liveLoginId,
+    adminIdentity,
     liveAdminRequest,
     liveAdminDownload,
     showToast,
     triggerHaptic,
   } = useQueue();
 
-  const activeAdmin = useMemo(() => ({
-    fullName: adminIdentity?.fullName ?? 'Administrator',
-    adminId: adminIdentity?.loginId ?? '',
-  }), [adminIdentity]);
   const [isLoadingLive, setIsLoadingLive] = useState(false);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [hasLoadedLive, setHasLoadedLive] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [officesError, setOfficesError] = useState<string | null>(null);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [logsError, setLogsError] = useState<string | null>(null);
   const [offices, setOffices] = useState<AdminOfficeRecord[]>([]);
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const [broadcasts] = useState<AdminBroadcastRecord[]>([]);
+  const [auditRecords, setAuditRecords] = useState<AdminAuditRecord[]>([]);
   const [liveKpis, setLiveKpis] = useState<Partial<Record<AdminDateRange, AdminKpiSnapshot>>>({});
+
+  const staffByUidRef = useRef<Map<string, LiveAccountDoc>>(new Map());
+  const officeNameByIdRef = useRef<Map<string, string>>(new Map());
+  const activeRangeRef = useRef<AdminDateRange>('Today (Live)');
+  const appStateRef = useRef<string>(AppState.currentState ?? 'active');
+  const consecutiveFailuresRef = useRef(0);
+  const adminLoad = useRef(0);
+  const auditLoad = useRef(0);
+  const invalidate = useCallback(() => { adminLoad.current++; auditLoad.current++; }, []);
+
   const isLiveAdmin = liveRole === 'admin';
-  const revision = useRef(0);
-  const invalidateRefresh = useCallback(() => { revision.current++; }, []);
+
+  const activeAdmin = useMemo<AdminAccount>(
+    () => ({
+      id: liveLoginId || '',
+      adminId: liveLoginId ? liveLoginId.toUpperCase() : '',
+      password: '',
+      fullName: adminIdentity?.fullName ?? 'Administrator',
+      email: '',
+      role: 'admin',
+      institution: '',
+    }),
+    [adminIdentity, liveLoginId]
+  );
+
+  const fetchAllAdminPages = useCallback(
+    async <T,>(baseQuery: string, maxPages = 5, silent = false): Promise<T[]> => {
+      const items: T[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < maxPages; page++) {
+        const query: string = cursor
+          ? `${baseQuery}&cursor=${encodeURIComponent(cursor)}`
+          : baseQuery;
+        const response: { items?: T[]; nextCursor?: string | null } =
+          await liveAdminRequest<{ items?: T[]; nextCursor?: string | null }>(
+            query,
+            undefined,
+            'GET',
+            silent
+          );
+        if (Array.isArray(response.items)) {
+          items.push(...response.items);
+        }
+        cursor = response.nextCursor ?? null;
+        if (!cursor) break;
+      }
+      return items;
+    },
+    [liveAdminRequest]
+  );
 
   const refreshAdminData = useCallback(
-    async (range: AdminDateRange = 'Today (Live)') => {
+    async (range: AdminDateRange = activeRangeRef.current, silent = false) => {
       if (!isLiveAdmin) return;
-      const load = ++revision.current;
-      setIsLoadingLive(true);
+      const load = ++adminLoad.current;
+      activeRangeRef.current = range;
+      if (!silent) setIsLoadingLive(true);
       setLiveError(null);
+
       try {
         const { startDate, endDate } = rangeToDates(range);
-        const [officesRes, staffRes, studentsRes, analyticsRes] =
-          await Promise.all([
-            liveAdminRequest<{ items: LiveOfficeDoc[] }>('resource=offices&limit=100'),
-            liveAdminRequest<{ items: LiveAccountDoc[] }>('resource=staff&archived=true&limit=100'),
-            liveAdminRequest<{ items: LiveAccountDoc[] }>(
-              'resource=students&archived=true&limit=100'
-            ),
-            liveAdminRequest<LiveAnalyticsResponse>(
-              `resource=analytics&startDate=${startDate}&endDate=${endDate}`
-            ),
-          ]);
 
-        // Hydrate counters + request-types per office
+        // Wave 1: Core telemetry (offices + analytics) — silent=true prevents LogBox RedBox spam on transient timeouts
+        const [officesSettled, analyticsSettled] = await Promise.allSettled([
+          fetchAllAdminPages<LiveOfficeDoc>('resource=offices&limit=100', 3, true),
+          liveAdminRequest<LiveAnalyticsResponse>(
+            `resource=analytics&startDate=${startDate}&endDate=${endDate}`,
+            undefined,
+            'GET',
+            true
+          ),
+        ]);
+
+        // Wave 2: Directory accounts + recent activity logs (staggered to avoid saturating local dev/Firestore connections)
+        const [staffSettled, studentsSettled] = await Promise.allSettled([
+          fetchAllAdminPages<LiveAccountDoc>('resource=staff&archived=true&limit=100', 3, true),
+          fetchAllAdminPages<LiveAccountDoc>('resource=students&archived=true&limit=100', 3, true),
+        ]);
+        if (load !== adminLoad.current) return;
+
+        const officeDocs =
+          officesSettled.status === 'fulfilled' ? officesSettled.value : [];
+        const staffDocs =
+          staffSettled.status === 'fulfilled' ? staffSettled.value : [];
+        const studentDocs =
+          studentsSettled.status === 'fulfilled' ? studentsSettled.value : [];
+        const analyticsRes: LiveAnalyticsResponse =
+          analyticsSettled.status === 'fulfilled'
+            ? analyticsSettled.value
+            : {
+                summary: {
+                  issued: 0,
+                  completed: 0,
+                  cancelled: 0,
+                  noShow: 0,
+                  legacySkipped: 0,
+                  waiting: 0,
+                  called: 0,
+                  serving: 0,
+                  averageWaitMinutes: null,
+                  averageServiceMinutes: null,
+                  completionRate: null,
+                  noShowRate: null,
+                },
+                groups: { office: [], requestType: [], date: [] },
+              };
+
+        const extractReason = (res: PromiseSettledResult<unknown>, fallback: string) =>
+          res.status === 'rejected'
+            ? res.reason instanceof Error
+              ? res.reason.message
+              : fallback
+            : null;
+
+        const nextOfficesErr = extractReason(officesSettled, 'Unable to sync campus offices.');
+        const nextUsersErr =
+          extractReason(staffSettled, 'Unable to sync staff directory.') ??
+          extractReason(studentsSettled, 'Unable to sync student directory.');
+        const nextAnalyticsErr = extractReason(analyticsSettled, 'Unable to sync campus telemetry.');
+
+        setOfficesError(nextOfficesErr);
+        setUsersError(nextUsersErr);
+
+        const coreErr = nextOfficesErr ?? nextAnalyticsErr;
+        if (coreErr || nextUsersErr) {
+          consecutiveFailuresRef.current += 1;
+        } else {
+          consecutiveFailuresRef.current = 0;
+        }
+        setLiveError(coreErr);
+
+        const staffByUid = new Map(staffDocs.map((doc) => [doc.id, doc]));
+        staffByUidRef.current = staffByUid;
+
         const officeMetricsMap = new Map(
           analyticsRes.groups.office.map((g) => [g.id, g])
         );
+        const requestTypeWaitingMap = new Map(
+          (analyticsRes.groups.requestType ?? []).map((g) => [g.id, g.waiting])
+        );
 
-        const hydratedOffices: AdminOfficeRecord[] = await Promise.all(
-          officesRes.items.map(async (o) => {
-            const [countersRes, servicesRes] = await Promise.all([
-              liveAdminRequest<{ items: LiveCounterDoc[] }>(
-                `resource=counters&officeId=${encodeURIComponent(o.id)}&limit=100`
-              ),
-              liveAdminRequest<{
-                items: {
-                  id: string;
-                  name: string;
-                  duration?: number;
-                  docs?: string;
-                  available?: boolean;
-                }[];
-              }>(`resource=request-types&officeId=${encodeURIComponent(o.id)}&limit=100`),
-            ]);
+        // Wave 3: Hydrate counters & services per office sequentially so we don't burst concurrent connections
+        const hydratedOffices: AdminOfficeRecord[] = [];
+        for (const o of officeDocs) {
+          const [countersRes, servicesRes] = await Promise.all([
+            fetchAllAdminPages<LiveCounterDoc>(
+              `resource=counters&officeId=${encodeURIComponent(o.id)}&limit=100`,
+              2,
+              true
+            ),
+            liveAdminRequest<{
+              items: {
+                id: string;
+                name: string;
+                duration?: number;
+                docs?: string;
+                available?: boolean;
+              }[];
+            }>(`resource=request-types&officeId=${encodeURIComponent(o.id)}`, undefined, 'GET', true),
+          ]);
 
-            const windows: AdminOfficeWindow[] = countersRes.items.map((c) => ({
+          const officeStaff = staffDocs.filter(
+            (s) => s.officeId === o.id && s.accountStatus !== 'archived' && !s.archivedAt
+          );
+
+          const windows: AdminOfficeWindow[] = countersRes.map((c) => {
+            const assignedByUid = c.assignedStaffUid
+              ? staffByUid.get(c.assignedStaffUid)
+              : undefined;
+            const fallbackStaff = officeStaff.find(
+              (s) =>
+                s.defaultCounterWindow === c.id ||
+                s.defaultCounterWindow === c.name ||
+                s.counterIds?.includes(c.id)
+            );
+            const matchedStaff = assignedByUid ?? fallbackStaff;
+
+            return {
               id: c.id,
               label: c.name || c.id,
               status:
                 c.status === 'online' ? 'Online' : c.status === 'break' ? 'Break' : 'Closed',
-              staffName: c.staffName,
-              staffId: c.staffId,
-            }));
-
-            const services: AdminServiceItem[] = (
-              servicesRes.items.length ? servicesRes.items : (o.services ?? [])
-            ).map((s) => ({
-              id: s.id,
-              name: s.name,
-              estimatedDurationMinutes: s.duration ?? 0,
-              requiredDocumentsNote: s.docs ?? '',
-              isActive: s.available !== false,
-              waitingCount: 0,
-            }));
-
-            const officeMetric = officeMetricsMap.get(o.id);
-
-            return {
-              id: o.id,
-              name: o.name || o.id,
-              shortLabel: o.shortLabel || (o.name || o.id).replace(' Office', ''),
-              prefix: (o.prefix || o.id.slice(0, 1)).toUpperCase(),
-              status: o.acceptingTickets === false ? 'closed' : 'open',
-              operatingHours: '—',
-              locationDescription: o.description || '—',
-              windowCount: windows.length,
-              lastIssuedNumber: o.lastIssuedNumber ?? 0,
-              activeWaitingCount: o.waitingCount ?? officeMetric?.waiting ?? 0,
-              avgWaitMinutes: officeMetric?.averageWaitMinutes == null ? undefined : Math.round(officeMetric.averageWaitMinutes),
-              themeColor: o.themeColor || '#0E8AA8',
-              windows,
-              services,
+              staffName: c.staffName || matchedStaff?.fullName || matchedStaff?.staffName,
+              staffId: c.staffId || matchedStaff?.loginId || matchedStaff?.staffId,
             };
-          })
-        );
+          });
+
+          const services: AdminServiceItem[] = (
+            servicesRes.items.length ? servicesRes.items : (o.services ?? [])
+          ).map((s) => ({
+            id: s.id,
+            name: s.name,
+            estimatedDurationMinutes: s.duration ?? 0,
+            requiredDocumentsNote: s.docs ?? '',
+            isActive: s.available !== false,
+            waitingCount:
+              requestTypeWaitingMap.get(`${o.id}/${s.id}`) ??
+              requestTypeWaitingMap.get(`${o.id}/${s.name}`) ??
+              0,
+          }));
+
+          const officeMetric = officeMetricsMap.get(o.id);
+          const activeWaitingCount = Math.max(
+            0,
+            o.waitingCount ?? officeMetric?.waiting ?? 0
+          );
+          const liveEstimatedWait = calculateEstimatedWaitMinutes({
+            officeId: o.id,
+            officeName: o.name,
+            peopleAhead:
+              activeWaitingCount + (o.nowServing && o.nowServing.trim() ? 1 : 0),
+            backendEstimate: officeMetric?.averageWaitMinutes,
+          });
+
+          hydratedOffices.push({
+            id: o.id,
+            name: o.name || o.id,
+            shortLabel: o.shortLabel || (o.name || o.id).replace(' Office', ''),
+            prefix: (o.prefix || o.id.slice(0, 1)).toUpperCase(),
+            status: o.acceptingTickets === false ? 'closed' : 'open',
+            operatingHours: '',
+            locationDescription: o.description || '',
+            windowCount: windows.length,
+            lastIssuedNumber: o.lastIssuedNumber ?? 0,
+            activeWaitingCount,
+            avgWaitMinutes:
+              officeMetric?.averageWaitMinutes != null && officeMetric.averageWaitMinutes > 0
+                ? Math.round(officeMetric.averageWaitMinutes)
+                : liveEstimatedWait,
+            themeColor: o.themeColor || '#0E8AA8',
+            windows,
+            services,
+          });
+        }
 
         const officeNameById = new Map(hydratedOffices.map((o) => [o.id, o.name]));
+        officeNameByIdRef.current = officeNameById;
 
-        const mapAccount = (doc: LiveAccountDoc, fallbackRole: 'staff' | 'student'): AdminUserRecord => {
+        const mapAccount = (
+          doc: LiveAccountDoc,
+          fallbackRole: 'staff' | 'student'
+        ): AdminUserRecord => {
           const isSuspended = doc.accountStatus === 'archived' || Boolean(doc.archivedAt);
           return {
             id: doc.id,
@@ -297,7 +518,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             role: fallbackRole,
             status: isSuspended ? 'suspended' : 'active',
             assignedOfficeId: doc.officeId,
-            assignedOfficeName: doc.office || (doc.officeId ? officeNameById.get(doc.officeId) : undefined),
+            assignedOfficeName:
+              doc.office || (doc.officeId ? officeNameById.get(doc.officeId) : undefined),
             defaultWindow: doc.defaultCounterWindow,
             courseYear:
               doc.program || doc.yearLevel
@@ -308,19 +530,16 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         };
 
         const mappedUsers: AdminUserRecord[] = [
-          ...staffRes.items.map((d) => mapAccount(d, 'staff')),
-          ...studentsRes.items.map((d) => mapAccount(d, 'student')),
+          ...staffDocs.map((d) => mapAccount(d, 'staff')),
+          ...studentDocs.map((d) => mapAccount(d, 'student')),
         ];
 
         const s = analyticsRes.summary;
         const skippedTotal = s.noShow + s.legacySkipped;
-        const peakHours =
-          analyticsRes.groups.date.length > 0
-            ? analyticsRes.groups.date.slice(0, 10).map((d) => ({
-                hourLabel: d.label.slice(5),
-                count: d.issued,
-              }))
-            : [];
+        const peakHours = analyticsRes.groups.date.slice(0, 10).map((d) => ({
+          hourLabel: d.label.slice(5),
+          count: d.issued,
+        }));
 
         const liveSnapshot: AdminKpiSnapshot = {
           totalIssued: s.issued,
@@ -333,45 +552,181 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           peakHours,
         };
 
-        if (load !== revision.current) return;
-        setOffices(hydratedOffices);
-        setUsers(mappedUsers);
-        setLiveKpis((prev) => ({ ...prev, [range]: liveSnapshot }));
+        if (load !== adminLoad.current) return;
+        if (officesSettled.status === 'fulfilled') setOffices(hydratedOffices);
+        if (staffSettled.status === 'fulfilled' && studentsSettled.status === 'fulfilled') {
+          setUsers(mappedUsers);
+        }
+        if (analyticsSettled.status === 'fulfilled') {
+          setLiveKpis((prev) => ({ ...prev, [range]: liveSnapshot }));
+        }
       } catch (err) {
+        if (load !== adminLoad.current) return;
+        consecutiveFailuresRef.current += 1;
         const msg = err instanceof Error ? err.message : 'Unable to sync campus telemetry.';
-        if (load === revision.current) setLiveError(msg);
+        setLiveError(msg);
+        setOfficesError(msg);
       } finally {
-        if (load === revision.current) setIsLoadingLive(false);
+        if (load === adminLoad.current) {
+          setHasLoadedLive(true);
+          setIsLoadingLive(false);
+        }
       }
     },
-    [isLiveAdmin, liveAdminRequest]
+    [fetchAllAdminPages, isLiveAdmin, liveAdminRequest]
+  );
+
+  const fetchLiveAuditLogs = useCallback(
+    async (startDate: string, endDate: string, officeId?: string) => {
+      if (!isLiveAdmin) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return;
+      if (startDate > endDate) return;
+
+      const load = ++auditLoad.current;
+      setIsLoadingLogs(true);
+      setLogsError(null);
+      try {
+        const parts = [
+          'resource=activity-logs',
+          `startDate=${encodeURIComponent(startDate)}`,
+          `endDate=${encodeURIComponent(endDate)}`,
+          officeId && officeId !== 'all' ? `officeId=${encodeURIComponent(officeId)}` : '',
+          'limit=50',
+        ].filter(Boolean);
+        const logDocs = await fetchAllAdminPages<LiveActivityLogDoc>(parts.join('&'), 2, true);
+        const mapped = mapActivityLogsToAuditRecords(
+          logDocs,
+          officeNameByIdRef.current,
+          staffByUidRef.current
+        );
+        if (load === auditLoad.current) setAuditRecords(mapped);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Unable to load activity logs for selected dates.';
+        if (load === auditLoad.current) setLogsError(message);
+      } finally {
+        if (load === auditLoad.current) setIsLoadingLogs(false);
+      }
+    },
+    [fetchAllAdminPages, isLiveAdmin]
   );
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (isLiveAdmin) {
-        void refreshAdminData();
-      } else {
-        setOffices([]);
-        setUsers([]);
-        setLiveKpis({});
-        setLiveError(null);
-        setIsLoadingLive(false);
+    if (!isLiveAdmin) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
+
+    const getPollDelay = () => {
+      const failures = consecutiveFailuresRef.current;
+      if (failures <= 0) return ADMIN_POLLING_INTERVAL_MS;
+      return Math.min(60_000, ADMIN_POLLING_INTERVAL_MS * Math.pow(2, Math.min(failures, 3)));
+    };
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void runPoll();
+      }, getPollDelay());
+    };
+
+    const runPoll = async (initial = false) => {
+      if (cancelled || inFlight || (!initial && appStateRef.current !== 'active')) {
+        scheduleNext();
+        return;
       }
-    }, 0);
-    return () => { clearTimeout(timer); invalidateRefresh(); };
-  }, [invalidateRefresh, isLiveAdmin, refreshAdminData]);
+      inFlight = true;
+      try {
+        await refreshAdminData(activeRangeRef.current, !initial);
+      } finally {
+        inFlight = false;
+        scheduleNext();
+      }
+    };
 
-  const getKpiSnapshot = useCallback((range: AdminDateRange): AdminKpiSnapshot =>
-    liveKpis[range] ?? {
-      totalIssued: 0, issuedDeltaLabel: '—', completedCount: 0, completionRate: 0,
-      activeWaiting: 0, skippedCount: 0, skippedRate: 0, peakHours: [],
-    }, [liveKpis]);
+    timer = setTimeout(() => { void runPoll(true); }, 0);
 
-  const broadcasts: AdminBroadcastRecord[] = noBroadcasts;
-  const sendBroadcast = useCallback((_input: SendBroadcastInput) => ({
-    ok: false, recipientCount: 0, error: 'CampusQueue does not currently have a broadcast endpoint.',
-  }), []);
+    const sub = AppState.addEventListener('change', (nextState) => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextState;
+      if (prev !== 'active' && nextState === 'active') {
+        consecutiveFailuresRef.current = 0;
+        void runPoll(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      invalidate();
+      if (timer) clearTimeout(timer);
+      sub.remove();
+    };
+  }, [invalidate, isLiveAdmin, refreshAdminData]);
+
+  const logoutAdmin = useCallback(() => {
+    invalidate();
+    consecutiveFailuresRef.current = 0;
+    setHasLoadedLive(false);
+    setIsLoadingLive(false);
+    setIsLoadingLogs(false);
+    setLiveError(null);
+    setOfficesError(null);
+    setUsersError(null);
+    setLogsError(null);
+    setOffices([]);
+    setUsers([]);
+    setAuditRecords([]);
+    setLiveKpis({});
+  }, [invalidate]);
+
+  useEffect(() => {
+    if (isLiveAdmin) return;
+    const timer = setTimeout(logoutAdmin, 0);
+    return () => clearTimeout(timer);
+  }, [isLiveAdmin, logoutAdmin]);
+
+  const liveWaitingSum = useMemo(
+    () =>
+      offices
+        .filter((o) => o.status === 'open')
+        .reduce((sum, o) => sum + o.activeWaitingCount, 0),
+    [offices]
+  );
+
+  const getKpiSnapshot = useCallback(
+    (range: AdminDateRange): AdminKpiSnapshot => {
+      if (liveKpis[range]) {
+        return {
+          ...liveKpis[range]!,
+          activeWaiting:
+            range === 'Today (Live)'
+              ? Math.max(liveWaitingSum, liveKpis[range]!.activeWaiting)
+              : liveKpis[range]!.activeWaiting,
+        };
+      }
+      return {
+        totalIssued: 0,
+        issuedDeltaLabel: 'Live backend data',
+        completedCount: 0,
+        completionRate: 0,
+        activeWaiting: liveWaitingSum,
+        skippedCount: 0,
+        skippedRate: 0,
+        peakHours: [],
+      };
+    },
+    [liveKpis, liveWaitingSum]
+  );
+
+  const sendBroadcast = useCallback(
+    (_input: SendBroadcastInput) => {
+      const error = 'Campus-wide broadcasts are not supported by the backend API yet.';
+      showToast(error, 'warning');
+      return { ok: false, recipientCount: 0, error };
+    },
+    [showToast]
+  );
 
   const toggleOfficeStatus = useCallback(
     async (officeId: string) => {
@@ -379,26 +734,20 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       if (!target) return;
       const nextAccepting = target.status !== 'open';
 
-      if (!isLiveAdmin) return;
       try {
         await liveAdminRequest('resource=offices', {
           action: 'update',
           id: officeId,
           acceptingTickets: nextAccepting,
         });
-        setOffices((prev) =>
-          prev.map((o) =>
-            o.id === officeId ? { ...o, status: nextAccepting ? 'open' : 'closed' } : o
-          )
-        );
+        await refreshAdminData(activeRangeRef.current, true);
         triggerHaptic('light');
         showToast(`${target.shortLabel} queue status updated.`, 'matcha');
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Failed to update office.', 'warning');
       }
-      return;
     },
-    [isLiveAdmin, liveAdminRequest, offices, showToast, triggerHaptic]
+    [liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const toggleServiceStatus = useCallback(
@@ -408,7 +757,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       if (!service) return;
       const nextAvailable = !service.isActive;
 
-      if (!isLiveAdmin) return;
       try {
         await liveAdminRequest('resource=request-types', {
           action: 'update',
@@ -416,27 +764,14 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           id: serviceId,
           available: nextAvailable,
         });
+        await refreshAdminData(activeRangeRef.current, true);
+        triggerHaptic('light');
+        showToast('Service catalog updated.', 'dark');
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Failed to update service.', 'warning');
-        return;
       }
-
-      setOffices((prev) =>
-        prev.map((o) =>
-          o.id !== officeId
-            ? o
-            : {
-                ...o,
-                services: o.services.map((s) =>
-                  s.id === serviceId ? { ...s, isActive: nextAvailable } : s
-                ),
-              }
-        )
-      );
-      triggerHaptic('light');
-      showToast('Service catalog updated.', 'dark');
     },
-    [isLiveAdmin, liveAdminRequest, offices, showToast, triggerHaptic]
+    [liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const saveOffice = useCallback(
@@ -444,14 +779,20 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       const cleanName = input.name.trim();
       const cleanPrefix = input.prefix.trim().toUpperCase();
       if (!cleanName) return { ok: false, error: 'Office name is required.' };
-      if (!/^[A-Z]{1,2}$/.test(cleanPrefix)) {
-        return { ok: false, error: 'Ticket prefix must be 1–2 uppercase letters (e.g., R or AC).' };
+      if (!/^[A-Z]{1,4}$/.test(cleanPrefix)) {
+        return {
+          ok: false,
+          error: 'Ticket prefix must be 1–4 uppercase letters.',
+        };
       }
       const duplicate = offices.find(
         (o) => o.prefix.toUpperCase() === cleanPrefix && o.id !== input.id
       );
       if (duplicate) {
-        return { ok: false, error: `Prefix "${cleanPrefix}" is already used by ${duplicate.name}.` };
+        return {
+          ok: false,
+          error: `Prefix "${cleanPrefix}" is already used by ${duplicate.name}.`,
+        };
       }
 
       const slug = cleanName
@@ -460,7 +801,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         .replace(/(^-|-$)/g, '');
       const officeId = input.id ?? `${slug || 'office'}-${Date.now().toString(36)}`;
 
-      if (!isLiveAdmin) return { ok: false, error: 'Administrator access required.' };
       try {
         if (input.id) {
           await liveAdminRequest('resource=offices', {
@@ -480,19 +820,15 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             description: input.locationDescription.trim(),
             acceptingTickets: true,
           });
-          try {
-            for (let number = 1; number <= input.windowCount; number++) {
-              await liveAdminRequest('resource=counters', {
-                action: 'create', officeId, id: 'window-' + number, name: 'Window ' + number,
-              });
-            }
-          } catch (error) {
-            await refreshAdminData();
-            return {
-              ok: false, error: error instanceof Error
-                ? 'Office created, but some counters could not be saved. ' + error.message
-                : 'Office created, but some counters could not be saved.',
-            };
+          const count = Math.max(1, Math.min(10, input.windowCount || 1));
+          for (let idx = 1; idx <= count; idx++) {
+            await liveAdminRequest('resource=counters', {
+              action: 'create',
+              officeId,
+              id: `Window ${idx}`,
+              name: `Window ${idx}`,
+              status: idx === 1 ? 'online' : 'closed',
+            });
           }
         }
         await refreshAdminData();
@@ -500,10 +836,13 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         showToast('Campus office saved.', 'matcha');
         return { ok: true };
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : 'Failed to save office.' };
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : 'Failed to save office.',
+        };
       }
     },
-    [isLiveAdmin, liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
+    [liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const saveService = useCallback(
@@ -516,9 +855,11 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
 
       const serviceId =
         input.id ??
-        `${officeId}-${cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}-${Date.now().toString(36).slice(-4)}`;
+        `${officeId}-${cleanName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .slice(0, 24)}-${Date.now().toString(36).slice(-4)}`;
 
-      if (!isLiveAdmin) return { ok: false, error: 'Administrator access required.' };
       try {
         await liveAdminRequest('resource=request-types', {
           action: input.id ? 'update' : 'create',
@@ -540,65 +881,55 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         };
       }
     },
-    [isLiveAdmin, liveAdminRequest, refreshAdminData, showToast, triggerHaptic]
+    [liveAdminRequest, refreshAdminData, showToast, triggerHaptic]
   );
 
-  const resetOfficeSequence = useCallback((_officeId: string): ActionResult => ({
-    ok: false, error: 'CampusQueue does not currently have a queue sequence reset endpoint.',
-  }), []);
+  const resetOfficeSequence = useCallback(
+    (_officeId: string): ActionResult => {
+      const error = 'Resetting office ticket sequence is not supported by the backend API yet.';
+      triggerHaptic('warning');
+      showToast(error, 'warning');
+      return { ok: false, error };
+    },
+    [showToast, triggerHaptic]
+  );
 
   const provisionUser = useCallback(
-    async (input: ProvisionUserInput): Promise<ActionResult> => {
+    async (input: ProvisionUserInput & { password?: string }): Promise<ActionResult> => {
       const cleanId = input.identifier.trim().toUpperCase();
       const cleanName = input.fullName.trim();
       const cleanEmail = input.email.trim().toLowerCase();
+      const initialPassword = (input.password ?? '').trim();
 
-      if (!cleanId) return { ok: false, error: 'Employee or Admin ID is required.' };
-      if (input.role === 'staff' && !/^EMP-\d{4}$/.test(cleanId)) {
-        return { ok: false, error: 'Staff ID must match format EMP-**** (e.g., EMP-1043).' };
-      }
-      if (input.role === 'admin' && !/^ADM-\d{3}$/.test(cleanId)) {
-        return { ok: false, error: 'Admin ID must match format ADM-*** (e.g., ADM-004).' };
-      }
-      if (users.some((u) => u.identifier.toUpperCase() === cleanId)) {
-        return { ok: false, error: `Account ${cleanId} already exists.` };
-      }
-      if (!cleanName) return { ok: false, error: 'Full name is required.' };
-      if (!cleanEmail || !cleanEmail.endsWith('@aclc.edu.ph')) {
-        return { ok: false, error: 'Institutional email must end with @aclc.edu.ph.' };
-      }
-
-      const assignedOffice = offices.find((o) => o.id === input.assignedOfficeId);
-      if (input.role === 'staff') {
-        const office = offices.find((o) => o.id === input.assignedOfficeId);
-        if (!office) {
-          return { ok: false, error: 'Please assign a campus office for staff accounts.' };
-        }
-
-      }
-
-      if (!isLiveAdmin) return { ok: false, error: 'Administrator access required.' };
       if (input.role === 'admin') {
         return {
           ok: false,
-          error: 'Admin accounts must be provisioned using the backend CLI provisioning script.',
+          error: 'Admin accounts can only be provisioned via the backend CLI script.',
         };
       }
-      const counter = assignedOffice?.windows[0]?.id;
-      if (!counter) return { ok: false, error: 'Assign an office with a configured counter.' };
-      if (input.password.length < 8 || input.password.length > 128) {
-        return { ok: false, error: 'Enter an initial password between 8 and 128 characters.' };
+      if (!cleanId) return { ok: false, error: 'Employee ID is required.' };
+      if (!cleanName) return { ok: false, error: 'Full name is required.' };
+      if (initialPassword.length < 8 || initialPassword.length > 128) {
+        return { ok: false, error: 'Initial password must be 8 to 128 characters.' };
       }
+      const assignedOffice = offices.find((o) => o.id === input.assignedOfficeId);
+      if (!assignedOffice) {
+        return { ok: false, error: 'Please assign a campus office for staff accounts.' };
+      }
+
       try {
+        const officeCounterIds = assignedOffice.windows.map((w) => w.id);
+        const defaultCounterWindow = officeCounterIds[0];
         await liveAdminRequest('resource=staff', {
           action: 'create',
           loginId: cleanId,
           fullName: cleanName,
-          password: input.password,
-          email: cleanEmail,
+          password: initialPassword,
+          ...(cleanEmail ? { email: cleanEmail } : {}),
           officeId: input.assignedOfficeId,
-          counterIds: [counter],
-          defaultCounterWindow: counter,
+          ...(officeCounterIds.length > 0
+            ? { counterIds: officeCounterIds, defaultCounterWindow }
+            : { counterIds: [] }),
         });
         await refreshAdminData();
         triggerHaptic('success');
@@ -611,7 +942,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         };
       }
     },
-    [isLiveAdmin, liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic, users]
+    [liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const updateStaffAssignment = useCallback(
@@ -619,14 +950,18 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       const office = offices.find((o) => o.id === officeId);
       if (!office) return { ok: false, error: 'Selected office not found.' };
 
-      if (!isLiveAdmin) return { ok: false, error: 'Administrator access required.' };
       try {
+        if (!office.windows.some((window) => window.id === defaultWindow)) {
+          return { ok: false, error: 'Select a counter assigned to this office.' };
+        }
+        const counterIds = [defaultWindow];
+
         await liveAdminRequest('resource=staff', {
           action: 'update',
           id: userId,
           officeId,
-          counterIds: [defaultWindow],
-          defaultCounterWindow: defaultWindow,
+          counterIds,
+          ...(defaultWindow ? { defaultCounterWindow: defaultWindow } : {}),
         });
         await refreshAdminData();
         triggerHaptic('success');
@@ -638,29 +973,32 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: msg };
       }
     },
-    [isLiveAdmin, liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
+    [liveAdminRequest, offices, refreshAdminData, showToast, triggerHaptic]
   );
 
   const resetUserPassword = useCallback(
-    async (userId: string, password: string): Promise<ActionResult> => {
+    async (userId: string, newPassword?: string): Promise<ActionResult> => {
       const target = users.find((u) => u.id === userId);
       if (!target) return { ok: false, error: 'User not found.' };
-
-      if (!isLiveAdmin) return { ok: false, error: 'Administrator access required.' };
       if (target.role === 'admin') {
-        showToast('Admin passwords must be reset via backend CLI.', 'warning');
-        return { ok: false, error: 'Admin passwords must be reset via backend CLI.' };
+        const error = 'Admin passwords must be reset via the backend CLI.';
+        showToast(error, 'warning');
+        return { ok: false, error };
       }
+      const password = (newPassword ?? '').trim();
+      if (password.length < 8 || password.length > 128) {
+        return { ok: false, error: 'New password must be 8 to 128 characters.' };
+      }
+
       try {
         const resource = target.role === 'staff' ? 'staff' : 'students';
-        if (password.length < 8 || password.length > 128) return { ok: false, error: 'Enter a password between 8 and 128 characters.' };
         await liveAdminRequest(`resource=${resource}`, {
           action: 'reset-password',
           id: userId,
           password,
         });
         triggerHaptic('success');
-        showToast('Password reset.', 'matcha');
+        showToast('Password updated on backend.', 'matcha');
         return { ok: true };
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to reset password.';
@@ -668,19 +1006,19 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: msg };
       }
     },
-    [isLiveAdmin, liveAdminRequest, showToast, triggerHaptic, users]
+    [liveAdminRequest, showToast, triggerHaptic, users]
   );
 
   const toggleAccountStatus = useCallback(
     async (userId: string): Promise<ActionResult> => {
       const target = users.find((u) => u.id === userId);
       if (!target) return { ok: false, error: 'User not found.' };
-
-      if (!isLiveAdmin) return { ok: false, error: 'Administrator access required.' };
       if (target.role === 'admin') {
-        showToast('Admin accounts cannot be suspended from the mobile UI.', 'warning');
-        return { ok: false };
+        const error = 'Admin accounts cannot be suspended from the mobile UI.';
+        showToast(error, 'warning');
+        return { ok: false, error };
       }
+
       try {
         const resource = target.role === 'staff' ? 'staff' : 'students';
         const action = target.status === 'active' ? 'archive' : 'restore';
@@ -695,61 +1033,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: msg };
       }
     },
-    [isLiveAdmin, liveAdminRequest, refreshAdminData, showToast, triggerHaptic, users]
+    [liveAdminRequest, refreshAdminData, showToast, triggerHaptic, users]
   );
-
-  const loadAuditRecords = useCallback(async (startDate: string, endDate: string, officeId?: string): Promise<AdminAuditRecord[]> => {
-    const params = new URLSearchParams({ resource: 'activity-logs', startDate, endDate, limit: '100' });
-    if (officeId && officeId !== 'all') params.set('officeId', officeId);
-    const logs: LiveActivityLogDoc[] = [];
-    do {
-      const result = await liveAdminRequest<{ items: LiveActivityLogDoc[]; nextCursor?: string }>(params.toString());
-      logs.push(...result.items);
-      if (!result.nextCursor) break;
-      params.set('cursor', result.nextCursor);
-    } while (logs.length < 500);
-    const officeNameById = new Map(offices.map((office) => [office.id, office.name]));
-      return logs.map((log) => {
-        const created = new Date(log.createdAt);
-        const dateKey = log.createdAt.slice(0, 10);
-        const timeLabel = Number.isFinite(created.valueOf())
-          ? created.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-          : log.createdAt;
-        const actionText = (log.action || 'event').toLowerCase();
-        const outcome = actionText === 'ticket_cancelled'
-          ? 'Cancelled'
-          : actionText === 'ticket_skipped' || actionText === 'ticket_no_show'
-            ? 'Skipped'
-            : actionText === 'service_completed' ? 'Completed' : 'Activity';
-
-        return {
-          id: log.id,
-          documentId: `activityLogs/${log.id}`,
-          ticketCode: log.ticketId || '—',
-          dateKey,
-          dateTimeLabel: `${dateKey} • ${timeLabel}`,
-          officeId: log.officeId || 'campus',
-          officeName: (log.officeId && officeNameById.get(log.officeId)) || log.officeId || 'Campus-Wide',
-          serviceName: log.action || 'System Event',
-          studentName: String(log.details?.studentName ?? '—'),
-          studentUsn: String(log.details?.usn ?? '—'),
-          outcome,
-          issuedAt: '—',
-          approachingAlertAt: '—',
-          calledAt: '—',
-          qrVerifiedAt: '—',
-          closedAt: outcome === 'Activity' ? '—' : timeLabel,
-          waitDurationSeconds: 0,
-          serviceDurationSeconds: 0,
-          waitDurationLabel: '—',
-          serviceDurationLabel: '—',
-          verificationMethod: '—',
-          handledByStaffId: log.actorId || 'system',
-          handledByStaffName: log.actorId || 'System',
-          counterWindow: String(log.details?.counter ?? '—'),
-        };
-      });
-  }, [liveAdminRequest, offices]);
 
   const downloadAnalyticsReport = useCallback(
     async (
@@ -773,18 +1058,28 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     [isLiveAdmin, liveAdminDownload]
   );
 
-  const directoryTotalBadges = useMemo(() => ({
-    staff: users.filter((user) => user.role === 'staff').length,
-    students: users.filter((user) => user.role === 'student').length,
-    admins: 0,
-  }), [users]);
+  const directoryTotalBadges = useMemo(
+    () => ({
+      staff: users.filter((u) => u.role === 'staff').length,
+      students: users.filter((u) => u.role === 'student').length,
+      admins: users.filter((u) => u.role === 'admin').length,
+    }),
+    [users]
+  );
 
   const value = useMemo<AdminContextValue>(
     () => ({
       activeAdmin,
       isLoadingLive,
+      isLoadingLogs,
+      hasLoadedLive,
       liveError,
+      officesError,
+      usersError,
+      logsError,
+      logoutAdmin,
       refreshAdminData,
+      fetchLiveAuditLogs,
       getKpiSnapshot,
       broadcasts,
       sendBroadcast,
@@ -800,19 +1095,25 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       updateStaffAssignment,
       resetUserPassword,
       toggleAccountStatus,
-      loadAuditRecords,
+      auditRecords,
       downloadAnalyticsReport,
     }),
     [
       activeAdmin,
-      loadAuditRecords,
+      auditRecords,
       broadcasts,
       directoryTotalBadges,
       downloadAnalyticsReport,
+      fetchLiveAuditLogs,
       getKpiSnapshot,
+      hasLoadedLive,
       isLoadingLive,
+      isLoadingLogs,
       liveError,
+      logsError,
+      logoutAdmin,
       offices,
+      officesError,
       provisionUser,
       refreshAdminData,
       resetOfficeSequence,
@@ -825,6 +1126,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       toggleServiceStatus,
       updateStaffAssignment,
       users,
+      usersError,
     ]
   );
 

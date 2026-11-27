@@ -1,5 +1,5 @@
-import React from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
@@ -13,22 +13,28 @@ export function TurnCalledAlertModal() {
     calledAlertTicket,
     setCalledAlertTicket,
     setSelectedTicketId,
+    acknowledgeTicket,
     showToast,
     triggerHaptic,
-    acknowledgeTicket,
-    isMutating,
   } = useQueue();
+  const [acknowledging, setAcknowledging] = useState(false);
 
   if (!calledAlertTicket) return null;
 
   const handleOnMyWay = async () => {
+    if (acknowledging) return;
     const ticketId = calledAlertTicket.id;
-    if (!(await acknowledgeTicket(ticketId))) return;
-    setCalledAlertTicket(null);
-    setSelectedTicketId(ticketId);
-    triggerHaptic('success');
-    showToast('Counter notified: Student is on the way!', 'matcha');
-    router.replace('/student/ticket');
+    setAcknowledging(true);
+    try {
+      if (!(await acknowledgeTicket(ticketId))) return;
+      setCalledAlertTicket(null);
+      setSelectedTicketId(ticketId);
+      triggerHaptic('success');
+      showToast('Counter notified: Student is on the way!', 'matcha');
+      router.replace('/student/ticket');
+    } finally {
+      setAcknowledging(false);
+    }
   };
 
   return (
@@ -61,17 +67,26 @@ export function TurnCalledAlertModal() {
 
           <View style={styles.qrWrap}>
             <TactileQRCode
-              value={calledAlertTicket.qrPayload || calledAlertTicket.serial}
+              value={calledAlertTicket.qrPayload}
               size={136}
             />
           </View>
 
           <Pressable
-            disabled={isMutating}
-            onPress={handleOnMyWay}
-            style={({ pressed }) => [styles.ctaButton, pressed && styles.ctaPressed]}
+            onPress={() => {
+              void handleOnMyWay();
+            }}
+            disabled={acknowledging}
+            style={({ pressed }) => [
+              styles.ctaButton,
+              (pressed || acknowledging) && styles.ctaPressed,
+            ]}
           >
-            <Text style={styles.ctaText}>{isMutating ? 'Sending…' : 'I’m On My Way'}</Text>
+            {acknowledging ? (
+              <ActivityIndicator size="small" color={Colors.matcha} />
+            ) : (
+              <Text style={styles.ctaText}>I&apos;m On My Way</Text>
+            )}
           </Pressable>
         </View>
       </View>

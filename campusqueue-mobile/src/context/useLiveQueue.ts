@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { ApiResponseError, configuredApiUrl, createApiClient, type ApiDownload } from './apiClient';
+import { API_MAX_BACKOFF_MS, configuredApiUrl } from '../config/api';
+import { computeOfficeEstimatedWaitMins, computeStaffWaitingEstimateMins, formatOfficeCrowdBadge, normalizeActiveTicket } from '../utils/waitTime';
+import { ApiResponseError, createApiClient, type ApiDownload } from './apiClient';
 import { readRefreshToken, writeRefreshToken } from './sessionStorage';
 import type { ActiveTicket, HistoryTicket, IssueTicketInput, NotificationItem, Office, StudentProfile } from '../types/queue';
 import type { DeskStatus, ProcessedTransaction, StaffAccountRecord, StaffQueueTicket, VerifiedTicketData } from '../types/staff';
@@ -8,9 +10,9 @@ import type { DeskStatus, ProcessedTransaction, StaffAccountRecord, StaffQueueTi
 const api = createApiClient(configuredApiUrl, __DEV__);
 const request = <T,>(path: string, data?: object, token?: string) => api<T>(path, { data, token });
 
-type Role = 'student' | 'staff' | 'registrar_staff' | 'admin';
+export type LiveRole = 'student' | 'staff' | 'registrar_staff' | 'admin';
 type Tokens = { idToken: string; refreshToken: string; expiresIn: string | number };
-type Identity = { role: Role; staff?: StaffAccountRecord; account?: { loginId?: string; fullName?: string } };
+type Identity = { role: LiveRole; staff?: StaffAccountRecord; account?: { loginId?: string; fullName?: string } };
 type Session = { tokens: Tokens; expires: number; remember: boolean } & Identity;
 type Counter = { id: string; name: string; status: DeskStatus };
 type CounterDirectory = { officeId: string; defaultCounter: string | null; counters: Counter[] };
@@ -25,8 +27,9 @@ function expiry(tokens: Tokens) {
   return Date.now() + seconds * 1000;
 }
 type StudentState = { profile: StudentProfile; activeTickets: ActiveTicket[]; historyTickets: HistoryTicket[]; notifications: NotificationItem[] };
-type DeskTicket = StaffQueueTicket & { calledAt?: string; recallCount?: number };
+type DeskTicket = StaffQueueTicket;
 type DeskState = {
+  officeId: string;
   counter: string;
   deskStatus: DeskStatus;
   servingTicket: DeskTicket | null;
@@ -34,13 +37,16 @@ type DeskState = {
   transactions: (ProcessedTransaction & { isMine: boolean; durationSeconds?: number })[];
 };
 
-export function useLiveQueue(showError: (message: string) => void, onCalled: (ticket: ActiveTicket | null) => void) {
+export function useLiveQueue(showError: (message: string) => void, onCalled: (ticket: ActiveTicket | null) => void, onCompleted: (ticketNumber: string) => void) {
   const sessionRef = useRef<Session | null>(null);
-  const [role, setRole] = useState<Role | null>(null);
+  const [role, setRole] = useState<LiveRole | null>(null);
   const [identity, setIdentity] = useState<Identity>();
   const pendingRestore = useRef(false);
   const [restoring, setRestoring] = useState(true);
   const [restoreError, setRestoreError] = useState<string>();
+  const [isSyncing, setIsSyncing] = useState(false);
+  const failures = useRef(0);
+  const activeNumbers = useRef(new Map<string, string>());
   const [syncError, setSyncError] = useState<string>();
   const [counters, setCounters] = useState<Counter[]>([]);
   const [scope, setScope] = useState<Scope | null>(null);
@@ -60,6 +66,27 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
   const [desk, setDesk] = useState<DeskState>();
   const [student, setStudent] = useState<StudentState>();
   const [offices, setOffices] = useState<Office[]>([]);
+  const officesRef = useRef<Office[]>([]);
+  const loadOffices = useCallback(async (session: Session, token: string) => {
+    const all: Office[] = [];
+    let cursor: string | undefined;
+    do {
+      const query = cursor ? '?cursor=' + encodeURIComponent(cursor) : '';
+      const page = await request<{ offices: Office[]; nextCursor?: string }>('offices' + query, undefined, token);
+      if (!Array.isArray(page.offices)) throw new Error('CampusQueue returned an invalid office directory.');
+      all.push(...page.offices);
+      cursor = page.nextCursor;
+    } while (cursor);
+    const visible = session.role === 'student' ? all : all.filter((office) => office.id === session.staff?.officeId);
+    if (sessionRef.current === session) {
+      const catalog = visible.map((office) => ({
+        ...office, estWaitMins: computeOfficeEstimatedWaitMins(office), crowdBadge: formatOfficeCrowdBadge(office),
+      }));
+      officesRef.current = catalog;
+      setOffices(catalog);
+    }
+  }, []);
+
   const pendingRefresh = useRef<{ session: Session; promise: Promise<void> } | null>(null);
   const [clock, setClock] = useState(Date.now);
   const latestLoad = useRef(0);
@@ -69,6 +96,9 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
     sessionRef.current = null;
     latestLoad.current++;
     seenServing.current.clear();
+    activeNumbers.current.clear();
+    officesRef.current = [];
+    failures.current = 0;
     onCalled(null);
     setRole(null);
     setIdentity(undefined);
@@ -111,40 +141,65 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
     const revision = ++latestLoad.current;
     const token = await authorize(session);
     if (session.role === 'student') {
-      const state = await request<Partial<StudentState>>(activeOnly ? 'student?view=active' : 'student', undefined, token);
+      let state = await request<Partial<StudentState>>(activeOnly ? 'student?view=active' : 'student', undefined, token);
+      const currentTickets = state.activeTickets;
+      const ticketClosed = Array.isArray(currentTickets) &&
+        [...activeNumbers.current.keys()].some((id) => !currentTickets.some((ticket) => ticket.id === id));
+      if (activeOnly && ticketClosed && sessionRef.current === session) {
+        state = await request<StudentState>('student', undefined, token);
+        activeOnly = false;
+      }
       if (!Array.isArray(state.activeTickets) || !Array.isArray(state.notifications) ||
         (!activeOnly && (!state.profile || !Array.isArray(state.historyTickets)))) {
         throw new Error('CampusQueue returned invalid student data.');
       }
-      const { activeTickets, notifications, profile, historyTickets } = state;
+      const { notifications, profile, historyTickets } = state;
+      const activeTickets = state.activeTickets.map((ticket) =>
+        normalizeActiveTicket(ticket, officesRef.current.find((office) => office.id === ticket.officeId)));
       if (sessionRef.current === session && revision === latestLoad.current) {
         setStudent((previous) => {
           if (profile && historyTickets) return { activeTickets, notifications, profile, historyTickets };
           return previous && { ...previous, activeTickets, notifications };
         });
-        const pending = activeTickets.filter((ticket) => ticket.lifecycleStatus === 'called' && !ticket.acknowledgedAt);
-        const called = pending.find((ticket) => !seenServing.current.has(ticket.id));
+        if (historyTickets) {
+          for (const [id, number] of activeNumbers.current) {
+            if (!activeTickets.some((ticket) => ticket.id === id) &&
+              historyTickets.some((ticket) => ticket.ticketNumber === number && ticket.status === 'Completed')) {
+              onCompleted(number);
+            }
+          }
+          activeNumbers.current = new Map(activeTickets.map((ticket) => [ticket.id, ticket.ticketNumber]));
+        }
+        const key = (ticket: ActiveTicket) => ticket.id + ':' + (ticket.calledAt ?? ticket.issuedAt);
+        const called = activeTickets.find((ticket) =>
+          (ticket.lifecycleStatus === 'called' || ticket.lifecycleStatus === 'serving') &&
+          !ticket.acknowledgedAt && !seenServing.current.has(key(ticket)));
         if (called) {
-          seenServing.current.add(called.id);
+          seenServing.current.add(key(called));
           onCalled(called);
         }
       }
-      return { student: state };
+      return { student: { ...state, activeTickets } };
     }
     if (session.role === 'admin') {
       return {};
     }
     if (!selectedCounter) return {};
     const query = new URLSearchParams({ counter: selectedCounter, includeLogs: String(includeLogs) });
-    const state = await request<DeskState>('staff?' + query, undefined, token);
-    if (!Array.isArray(state.waitingQueue) || !Array.isArray(state.transactions)) {
+    const raw = await request<DeskState>('staff?' + query, undefined, token);
+    if (!Array.isArray(raw.waitingQueue) || !Array.isArray(raw.transactions)) {
       throw new Error('CampusQueue returned invalid staff queue data.');
     }
+    const currentOffice = officesRef.current.find((office) => office.id === raw.officeId);
+    const state = { ...raw, waitingQueue: raw.waitingQueue.map((ticket, index) => ({
+      ...ticket, estWaitMins: computeStaffWaitingEstimateMins(index, Boolean(raw.servingTicket), raw.officeId,
+        currentOffice?.name, currentOffice?.services.find((service) => service.name === ticket.serviceType)?.duration),
+    })) };
     if (sessionRef.current === session && revision === latestLoad.current) {
       setDesk((previous) => ({ ...state, transactions: includeLogs ? state.transactions : previous?.transactions ?? [] }));
     }
     return { desk: state };
-  }, [authorize, onCalled]);
+  }, [authorize, onCalled, onCompleted]);
 
   const startSession = useCallback(async (identity: Identity, tokens: Tokens, remember: boolean) => {
     if (!['student', 'staff', 'registrar_staff', 'admin'].includes(identity.role)) {
@@ -158,14 +213,10 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
         const directory = await request<CounterDirectory>('staff?view=counters', undefined, tokens.idToken);
         selected = directory.counters.find((item) => item.id === directory.defaultCounter)?.id ??
           directory.counters[0]?.id ?? '';
+        if (session.staff) session.staff = { ...session.staff, officeId: directory.officeId };
         setCounters(directory.counters);
       }
-      if (session.role !== 'admin') {
-        const directory = await request<{ offices: Office[] }>('offices', undefined, tokens.idToken);
-        if (!Array.isArray(directory.offices)) throw new Error('CampusQueue returned an invalid office directory.');
-        setOffices(session.role === 'student' ? directory.offices : directory.offices.filter((office) =>
-          office.id === session.staff?.officeId));
-      }
+      if (session.role !== 'admin') await loadOffices(session, tokens.idToken);
       counterRef.current = selected;
       const state = await read(session, selected);
       await persist(remember ? tokens.refreshToken : null);
@@ -186,11 +237,11 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
       }
       throw error;
     }
-  }, [onCalled, persist, read]);
+  }, [loadOffices, onCalled, persist, read]);
 
   const signIn = useCallback(async (loginId: string, password: string, remember: boolean) => {
     const result = await request<Tokens & Identity>('auth', { action: 'sign-in', loginId, password });
-    return startSession({ role: result.role, staff: result.staff, account: result.account }, result, remember);
+    return startSession({ role: result.role, staff: result.staff, account: result.account ?? { loginId } }, result, remember);
   }, [startSession]);
 
   const restore = useCallback(async () => {
@@ -227,20 +278,21 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
     if (!session || !requestedScope || mutationRef.current) return;
     if (activeRead.current) await activeRead.current;
     if (sessionRef.current !== session || requestedScope !== scopeRef.current || activeRead.current || mutationRef.current) return;
+    if (refreshDirectory) setIsSyncing(true);
     const run = (async () => {
       try {
         await read(session, counterRef.current, requestedScope === 'logs', !refreshDirectory);
         if (sessionRef.current !== session) return;
-        if (refreshDirectory && requestedScope === 'student') {
-          const directory = await request<{ offices: Office[] }>('offices', undefined, await authorize(session));
-          if (!Array.isArray(directory.offices)) throw new Error('CampusQueue returned an invalid office directory.');
-          if (sessionRef.current === session) setOffices(directory.offices);
-        }
+        if (refreshDirectory && requestedScope === 'student') await loadOffices(session, await authorize(session));
+        failures.current = 0;
         if (sessionRef.current === session) setSyncError(undefined);
       } catch (error) {
         if (sessionRef.current !== session) return;
         if (invalidSession(error)) signOut();
-        else setSyncError(error instanceof Error ? error.message : 'Could not refresh CampusQueue.');
+        else {
+          failures.current++;
+          setSyncError(error instanceof Error ? error.message : 'Could not refresh CampusQueue.');
+        }
       }
     })();
     activeRead.current = run;
@@ -248,8 +300,9 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
       await run;
     } finally {
       if (activeRead.current === run) activeRead.current = null;
+      if (refreshDirectory) setIsSyncing(false);
     }
-  }, [authorize, read, signOut]);
+  }, [authorize, loadOffices, read, signOut]);
 
   const enterScope = useCallback((next: Scope) => {
     scopeRef.current = next;
@@ -265,15 +318,21 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
 
   useEffect(() => {
     if (!role || !scope) return;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const stop = () => { if (timer) clearInterval(timer); timer = undefined; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let generation = 0;
+    const stop = () => { generation++; if (timer) clearTimeout(timer); };
     const start = () => {
       stop();
-      if (scope !== 'logs') {
-        timer = setInterval(() => {
-          if (!activeRead.current && !mutationRef.current) void refresh(scope, false);
-        }, scope === 'desk' ? 15000 : 30000);
-      }
+      if (scope === 'logs') return;
+      const current = generation;
+      const base = scope === 'desk' ? 15000 : 30000;
+      const schedule = () => {
+        timer = setTimeout(async () => {
+          if (!activeRead.current && !mutationRef.current) await refresh(scope, false);
+          if (current === generation) schedule();
+        }, Math.min(API_MAX_BACKOFF_MS, base * 2 ** Math.min(failures.current, 3)));
+      };
+      schedule();
     };
     if (AppState.currentState == null || AppState.currentState === 'active') start();
     const subscription = AppState.addEventListener('change', (state) => {
@@ -351,8 +410,11 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
 
   return {
     role, identity, staff, counters, counter, desk, student, offices, signIn, signOut,
-    restoring, restore, restoreError, refresh, enterScope, syncError, isMutating, adminRequest, adminDownload,
-    elapsed: desk?.servingTicket?.calledAt ? Math.max(0, Math.floor((clock - Date.parse(desk.servingTicket.calledAt)) / 1000)) : 0,
+    restoring, restore, restoreError, refresh, enterScope, syncError, isMutating, isSyncing,
+    hasLoaded: Boolean(student || desk || (role && !counter)), adminRequest, adminDownload,
+    elapsed: desk?.servingTicket ? Math.max(0, Math.floor(
+      (clock - Date.parse(desk.servingTicket.startedAt ?? desk.servingTicket.calledAt ?? desk.servingTicket.issuedAt)) / 1000,
+    )) : 0,
     changePassword: async (currentPassword: string, newPassword: string) => {
       const session = sessionRef.current;
       if (!session) throw new Error('Sign in to continue.');
@@ -365,7 +427,7 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
     issue: (input: IssueTicketInput) => safely(async () => {
       const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       const { result } = await mutate<{ ticket: ActiveTicket }>('student', { action: 'issue', requestId, ...input });
-      return result.ticket;
+      return normalizeActiveTicket(result.ticket, offices.find((office) => office.id === input.officeId));
     }, null),
     acknowledge: (ticketId: string) => safely(async () => {
       await mutate('student', { action: 'acknowledge', ticketId });
@@ -377,10 +439,12 @@ export function useLiveQueue(showError: (message: string) => void, onCalled: (ti
     }, false),
     preferences: (name: 'pushAlerts' | 'soundAndHaptics') => safely(async () => {
       await mutate('student', { action: 'preferences', [name]: !student?.profile[name] });
-    }, undefined),
+      return true;
+    }, false),
     notification: (id?: string) => safely(async () => {
       await mutate('student', id ? { action: 'read-notification', id } : { action: 'read-all' });
-    }, undefined),
+      return true;
+    }, false),
     selectCounter: (value: string) => {
       const session = sessionRef.current;
       if (!session || mutationRef.current || value === counterRef.current || !counters.some((item) => item.id === value)) return;

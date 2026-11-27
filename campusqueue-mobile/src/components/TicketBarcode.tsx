@@ -1,6 +1,7 @@
 import React from 'react';
 import Svg, { Rect } from 'react-native-svg';
 
+import { DEFAULT_BARCODE_WIDTHS } from '../constants/ui';
 import { Colors } from '../theme/tokens';
 
 interface TicketBarcodeProps {
@@ -9,8 +10,8 @@ interface TicketBarcodeProps {
 }
 
 export function TicketBarcode({
-  serial = 'CQ-2026-R042',
-  bars = [2, 1, 3, 1, 2, 2, 1, 3, 2, 1],
+  serial = '',
+  bars = DEFAULT_BARCODE_WIDTHS,
 }: TicketBarcodeProps) {
 
   return (
@@ -19,7 +20,7 @@ export function TicketBarcode({
       height={16}
       viewBox="0 0 88 16"
       fill="none"
-      accessibilityLabel={`Barcode ${serial}`}
+      accessibilityLabel={serial ? `Barcode ${serial}` : 'Ticket barcode'}
     >
       {bars.map((w, idx) => {
         const x = bars.slice(0, idx).reduce((offset, width, index) => offset + width + (index % 2 === 0 ? 1.5 : 2.1), 0);

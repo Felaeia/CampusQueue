@@ -18,19 +18,32 @@ import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 import { VerifiedTicketData } from '../../types/staff';
+import { formatDisplayTimestamp } from '../../utils/waitTime';
 
 export default function StaffQRScanner() {
   useQueueFocus('desk');
   const router = useRouter();
   const { showToast, triggerHaptic, liveVerify } = useQueue();
-  const { counterWindow, servingTicket } = useStaffQueue();
-  const verifying = useRef(false);
-  const [isVerifying, setIsVerifying] = useState(false);
+  const {
+    activeStaff,
+    counterWindow,
+    servingTicket,
+    completeCurrent,
+    skipCurrent,
+    cancelCurrent,
+  } = useStaffQueue();
   const [permission, requestPermission] = useCameraPermissions();
 
   // Scanner Controls
   const [isScanning, setIsScanning] = useState(true);
   const [torchEnabled, setTorchEnabled] = useState(false);
+  const verifying = useRef(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [selectedOutcome, setSelectedOutcome] = useState<'Completed' | 'No-Show' | 'Cancelled'>(
+    'Completed'
+  );
+  const [outcomeRemarks, setOutcomeRemarks] = useState('');
 
   // Modals State
   const [verifiedTicket, setVerifiedTicket] = useState<VerifiedTicketData | null>(null);
@@ -41,14 +54,16 @@ export default function StaffQRScanner() {
   const [manualTicketNum, setManualTicketNum] = useState('');
   const [manualUsnLast4, setManualUsnLast4] = useState('');
 
-  const expectedTicketCode = servingTicket?.ticketNumber ?? 'Ticket number';
-  const expectedUsnSuffix = 'Last 4 digits';
 
-  const verify = async (data: Parameters<typeof liveVerify>[0]) => {
+  const officeTitle = activeStaff.officeShort || activeStaff.office || 'Campus Office';
+  const expectedTicketCode = servingTicket?.ticketNumber ?? 'None called';
+  const expectedUsnSuffix = servingTicket?.usn.slice(-4) ?? 'Last 4 digits';
+
+  // Verify QR payload or manual ticket/USN strictly against live `POST /api/staff`
+  const verifyLive = async (data: Parameters<typeof liveVerify>[0]) => {
     if (verifying.current) return;
     verifying.current = true;
     setIsVerifying(true);
-    setIsScanning(false);
     try {
       setVerifiedTicket(await liveVerify(data));
       triggerHaptic('success');
@@ -62,34 +77,101 @@ export default function StaffQRScanner() {
   };
 
   const handleBarcodeScanned = ({ data }: { data: string }) => {
-    if (isScanning && !showManualModal) void verify({ qrPayload: data });
+    if (!isScanning) return;
+    setIsScanning(false);
+    void verifyLive({ qrPayload: data.trim() });
   };
 
   const handleManualVerify = () => {
-    const ticketNumber = manualTicketNum.trim().toUpperCase();
-    const usnSuffix = manualUsnLast4.trim();
-    setShowManualModal(false);
-    if (!ticketNumber || !/^\d{4}$/.test(usnSuffix)) {
+    const cleanTicket = manualTicketNum.trim().toUpperCase();
+    const cleanUsn = manualUsnLast4.trim();
+
+    if (!cleanTicket || !/^\d{4}$/.test(cleanUsn)) {
+      setShowManualModal(false);
       setIsScanning(false);
-      setErrorMessage('Enter the ticket number and the last four digits of the student USN.');
+      triggerHaptic('warning');
+      setErrorMessage('Enter a valid ticket number and the 4-digit USN suffix.');
       return;
     }
-    void verify({ ticketNumber, usnSuffix });
+
+    setShowManualModal(false);
+    setIsScanning(false);
+    setManualTicketNum('');
+    setManualUsnLast4('');
+    void verifyLive({ ticketNumber: cleanTicket, usnSuffix: cleanUsn });
   };
 
   const resetScanner = () => {
     setErrorMessage(null);
     setVerifiedTicket(null);
+    setSelectedOutcome('Completed');
+    setOutcomeRemarks('');
     setIsScanning(true);
   };
 
   const handleReturnToDesk = () => {
     const verifiedNum = verifiedTicket?.ticketNumber;
     setVerifiedTicket(null);
+    setSelectedOutcome('Completed');
+    setOutcomeRemarks('');
     if (verifiedNum) {
       showToast(`Ticket ${verifiedNum} QR verified`, 'matcha');
     }
     router.replace('/staff/registrar');
+  };
+
+  const handleFinalizeOutcome = async () => {
+    if (isCompleting || !verifiedTicket) return;
+    if (verifiedTicket.id && servingTicket?.id !== verifiedTicket.id) {
+      setErrorMessage('The verified ticket is no longer at this counter.');
+      return;
+    }
+    setIsCompleting(true);
+    try {
+      const cleanRemarks = outcomeRemarks.trim();
+      let finalizedNumber: string | undefined;
+      let nextTicket: { ticketNumber: string } | undefined;
+
+      if (selectedOutcome === 'Completed') {
+        const res = await completeCurrent(true, cleanRemarks || undefined);
+        finalizedNumber = res.completedNumber;
+        nextTicket = res.nextTicket;
+      } else if (selectedOutcome === 'No-Show') {
+        const res = await skipCurrent(cleanRemarks || 'Student did not appear at counter');
+        finalizedNumber = res.skippedNumber;
+        nextTicket = res.nextTicket;
+      } else {
+        const res = await cancelCurrent(cleanRemarks || 'Cancelled by counter staff');
+        finalizedNumber = res.cancelledNumber;
+        nextTicket = res.nextTicket;
+      }
+
+      if (!finalizedNumber) return;
+      setVerifiedTicket(null);
+      setSelectedOutcome('Completed');
+      setOutcomeRemarks('');
+      triggerHaptic(selectedOutcome === 'Completed' ? 'success' : 'warning');
+
+      const verb =
+        selectedOutcome === 'Completed'
+          ? 'completed'
+          : selectedOutcome === 'No-Show'
+            ? 'marked as No-Show'
+            : 'cancelled';
+      const tone = selectedOutcome === 'Completed' ? 'matcha' : 'warning';
+
+      if (nextTicket) {
+        showToast(
+          `${finalizedNumber} ${verb}. Now serving ${nextTicket.ticketNumber}.`,
+          tone
+        );
+      } else {
+        showToast(`${finalizedNumber} ${verb} and archived to History.`, tone);
+      }
+      router.replace('/staff/registrar');
+    } finally {
+      setIsCompleting(false);
+    }
   };
 
   const modals = (
@@ -122,7 +204,7 @@ export default function StaffQRScanner() {
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Program</Text>
-                <Text style={styles.detailValue}>{verifiedTicket?.program}</Text>
+                <Text style={styles.detailValue}>{verifiedTicket?.program || '—'}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Service</Text>
@@ -130,12 +212,79 @@ export default function StaffQRScanner() {
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Issued At</Text>
-                <Text style={styles.detailValue}>{verifiedTicket?.issuedAt}</Text>
+                <Text style={styles.detailValue}>
+                  {formatDisplayTimestamp(verifiedTicket?.issuedAt, 'short')}
+                </Text>
               </View>
             </View>
 
-            <TouchableOpacity style={styles.primaryEmeraldBtn} onPress={handleReturnToDesk}>
-              <Text style={styles.primaryEmeraldBtnText}>Start / Return to Service Desk</Text>
+            <Text style={styles.outcomeSectionLabel}>Select Final Outcome</Text>
+            <View style={styles.outcomeRow}>
+              {(['Completed', 'No-Show', 'Cancelled'] as const).map((option) => {
+                const active = selectedOutcome === option;
+                return (
+                  <TouchableOpacity
+                    key={option}
+                    style={[
+                      styles.outcomeChip,
+                      active &&
+                        (option === 'Completed'
+                          ? styles.outcomeChipComplete
+                          : option === 'No-Show'
+                            ? styles.outcomeChipNoShow
+                            : styles.outcomeChipCancel),
+                    ]}
+                    onPress={() => setSelectedOutcome(option)}
+                    disabled={isCompleting}
+                  >
+                    <Text
+                      style={[
+                        styles.outcomeChipText,
+                        active && styles.outcomeChipTextActive,
+                      ]}
+                    >
+                      {option}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TextInput
+              value={outcomeRemarks}
+              onChangeText={setOutcomeRemarks}
+              placeholder="Optional remarks or reason..."
+              placeholderTextColor={Colors.inkTabInactive}
+              style={styles.outcomeInput}
+              editable={!isCompleting}
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.primaryEmeraldBtn,
+                selectedOutcome === 'No-Show' && styles.primaryWarningBtn,
+                selectedOutcome === 'Cancelled' && styles.primaryDangerBtn,
+              ]}
+              onPress={() => {
+                void handleFinalizeOutcome();
+              }}
+              disabled={isCompleting}
+            >
+              {isCompleting ? (
+                <ActivityIndicator size="small" color={Colors.surface} />
+              ) : (
+                <Text style={styles.primaryEmeraldBtnText}>
+                  Mark {selectedOutcome} &amp; Advance
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalSecondaryBtn}
+              onPress={handleReturnToDesk}
+              disabled={isCompleting}
+            >
+              <Text style={styles.modalSecondaryText}>Return to Service Desk</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -215,8 +364,7 @@ export default function StaffQRScanner() {
               style={styles.textInput}
             />
 
-            <TouchableOpacity style={styles.primaryEmeraldBtn} disabled={isVerifying}
-              onPress={handleManualVerify}>
+            <TouchableOpacity style={styles.primaryEmeraldBtn} onPress={handleManualVerify}>
               <Text style={styles.primaryEmeraldBtnText}>Verify Ticket</Text>
             </TouchableOpacity>
 
@@ -293,7 +441,7 @@ export default function StaffQRScanner() {
         facing="back"
         enableTorch={torchEnabled}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onBarcodeScanned={isScanning && !isVerifying ? handleBarcodeScanned : undefined}
+        onBarcodeScanned={isScanning ? handleBarcodeScanned : undefined}
       />
 
       {/* Darkened Viewfinder Overlay */}
@@ -310,7 +458,9 @@ export default function StaffQRScanner() {
           </TouchableOpacity>
 
           <View style={styles.counterHeaderPill}>
-            <Text style={styles.counterHeaderTitle}>Registrar • {counterWindow}</Text>
+            <Text style={styles.counterHeaderTitle}>
+              {officeTitle} • {counterWindow}
+            </Text>
             <Text style={styles.counterHeaderSub}>Expected: {expectedTicketCode}</Text>
           </View>
 
@@ -336,8 +486,13 @@ export default function StaffQRScanner() {
             <View style={styles.scanLaserLine} />
           </View>
           <Text style={styles.scanHintText}>
-            Align the student&apos;s CampusQueue QR pass inside the frame
+            {isVerifying
+              ? 'Verifying student pass with CampusQueue...'
+              : "Align the student's CampusQueue QR pass inside the frame"}
           </Text>
+          {isVerifying ? (
+            <ActivityIndicator size="large" color={Colors.matcha} style={{ marginTop: 14 }} />
+          ) : null}
         </View>
 
         {/* Bottom Manual Lookup Bar */}
@@ -673,7 +828,66 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.successText,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 18,
+    marginTop: 14,
+  },
+  primaryWarningBtn: {
+    backgroundColor: Colors.warningDark,
+  },
+  primaryDangerBtn: {
+    backgroundColor: Colors.danger,
+  },
+  outcomeSectionLabel: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 11.5,
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  outcomeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  outcomeChip: {
+    flex: 1,
+    height: 36,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  outcomeChipComplete: {
+    backgroundColor: Colors.successText,
+    borderColor: Colors.successText,
+  },
+  outcomeChipNoShow: {
+    backgroundColor: Colors.warningDark,
+    borderColor: Colors.warningDark,
+  },
+  outcomeChipCancel: {
+    backgroundColor: Colors.danger,
+    borderColor: Colors.danger,
+  },
+  outcomeChipText: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12,
+  },
+  outcomeChipTextActive: {
+    color: Colors.surface,
+  },
+  outcomeInput: {
+    height: 44,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSubtle,
+    color: Colors.ink,
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    paddingHorizontal: 12,
+    marginTop: 10,
   },
   primaryEmeraldBtnText: {
     color: Colors.surface,

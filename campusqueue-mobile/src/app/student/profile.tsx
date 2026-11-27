@@ -33,6 +33,7 @@ export default function StudentProfileScreen() {
   useQueueFocus('student');
   const router = useRouter();
   const {
+    minPasswordLength,
     studentProfile,
     liveChangePassword,
     togglePushAlerts,
@@ -109,7 +110,7 @@ export default function StudentProfileScreen() {
 
             <View style={styles.emailBlock}>
               <Text style={styles.gridLabel}>EMAIL</Text>
-              <Text style={styles.emailValue}>{studentProfile.email}</Text>
+              <Text style={styles.emailValue}>{studentProfile.email || 'Not provided'}</Text>
             </View>
           </View>
         </View>
@@ -192,7 +193,7 @@ export default function StudentProfileScreen() {
 
       <ChangePasswordModal
         visible={showChangePwdModal}
-        minLength={8}
+        minLength={minPasswordLength}
         onClose={() => setShowChangePwdModal(false)}
         onSavePassword={async (newPwd, currentPwd) => {
           await liveChangePassword(currentPwd, newPwd);

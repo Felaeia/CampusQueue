@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,9 +9,11 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AdminUsersSkeleton } from '../../components/admin/AdminSkeleton';
 import { EditUserRoleAndOfficeModal } from '../../components/admin/EditUserRoleAndOfficeModal';
 import { ProvisionStaffOrAdminModal } from '../../components/admin/ProvisionStaffOrAdminModal';
 import { ResetUserPasswordModal } from '../../components/admin/ResetUserPasswordModal';
@@ -20,13 +23,6 @@ import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 import { AdminUserRecord, AdminUserRole } from '../../types/admin';
 
-const OFFICE_FILTER_OPTIONS = [
-  { id: 'all', label: 'All Offices' },
-  { id: 'registrar', label: 'Registrar' },
-  { id: 'accounting', label: 'Accounting' },
-  { id: 'sao', label: 'SAO' },
-];
-
 /**
  * Screen 4.3: User & Role Access Management (/admin/users)
  */
@@ -34,6 +30,10 @@ export default function AdminUsersScreen() {
   const {
     users,
     offices,
+    isLoadingLive,
+    hasLoadedLive,
+    usersError,
+    refreshAdminData,
     directoryTotalBadges,
     provisionUser,
     updateStaffAssignment,
@@ -41,6 +41,20 @@ export default function AdminUsersScreen() {
     toggleAccountStatus,
   } = useAdmin();
   const { triggerHaptic } = useQueue();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshAdminData(undefined, true);
+    }, [refreshAdminData])
+  );
+
+  const officeFilterOptions = useMemo(
+    () => [
+      { id: 'all', label: 'All Offices' },
+      ...offices.map((o) => ({ id: o.id, label: o.shortLabel || o.name })),
+    ],
+    [offices]
+  );
 
   const [activeTab, setActiveTab] = useState<AdminUserRole>('staff');
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,6 +108,15 @@ export default function AdminUsersScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoadingLive}
+            onRefresh={() => {
+              void refreshAdminData();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Role Directory Tabs */}
         <View style={styles.tabBar}>
@@ -155,7 +178,7 @@ export default function AdminUsersScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.filterRow}
           >
-            {OFFICE_FILTER_OPTIONS.map((opt) => {
+            {officeFilterOptions.map((opt) => {
               const active = officeFilter === opt.id;
               return (
                 <Pressable
@@ -172,8 +195,27 @@ export default function AdminUsersScreen() {
           </ScrollView>
         ) : null}
 
+        {/* Sync Error Banner */}
+        {usersError ? (
+          <Pressable
+            onPress={() => {
+              triggerHaptic('light');
+              void refreshAdminData();
+            }}
+            style={[styles.errorCard, Shadows.card]}
+          >
+            <Feather name="alert-triangle" size={16} color={Colors.danger} />
+            <View style={styles.flex}>
+              <Text style={styles.errorCardTitle}>Unable to sync user directory.</Text>
+              <Text style={styles.errorCardSub}>{usersError} Tap to retry.</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         {/* Directory List */}
-        {filteredUsers.length === 0 ? (
+        {(isLoadingLive || !hasLoadedLive) && users.length === 0 ? (
+          <AdminUsersSkeleton />
+        ) : filteredUsers.length === 0 ? (
           <View style={[styles.emptyCard, Shadows.card]}>
             <Feather name="users" size={24} color={Colors.inkMuted} />
             <Text style={styles.emptyTitle}>No user accounts match your search criteria.</Text>
@@ -573,5 +615,26 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodySemiBold,
     fontSize: 11.5,
     color: Colors.ink,
+  },
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: Radii.card,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+  },
+  errorCardTitle: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+    color: Colors.danger,
+  },
+  errorCardSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 11.5,
+    color: Colors.inkSoft,
+    marginTop: 1,
   },
 });

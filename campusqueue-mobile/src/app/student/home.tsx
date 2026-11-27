@@ -1,5 +1,13 @@
 import React, { useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,11 +21,16 @@ import { RadarPulseDot } from '../../components/RadarPulseDot';
 import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { ActiveTicket, Office } from '../../types/queue';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
+import { isTicketCalledOrServing } from '../../utils/waitTime';
 
 export default function StudentHomeScreen() {
   useQueueFocus('student');
   const router = useRouter();
   const {
+    isSyncingLive,
+    hasLoadedLive,
+    liveSyncError,
+    refreshLiveQueue,
     studentProfile,
     offices,
     activeTickets,
@@ -27,19 +40,19 @@ export default function StudentHomeScreen() {
     markNotificationRead,
     markAllNotificationsRead,
     issueTicket,
-    triggerHaptic,
     showToast,
-    isMutating,
-    syncError,
-    refresh,
+    triggerHaptic,
   } = useQueue();
 
   const [requestSheetOffice, setRequestSheetOffice] = useState<Office | null>(null);
   const [conflictTicket, setConflictTicket] = useState<ActiveTicket | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
+
   const primaryActive = activeTickets[0] ?? null;
+  const primaryIsServing = isTicketCalledOrServing(primaryActive);
+  const openOfficesCount = offices.filter((o) => o.acceptingTickets !== false).length;
+  const isInitialLoading = !hasLoadedLive && offices.length === 0;
 
   const handleOpenTicket = (ticketId: string) => {
     setSelectedTicketId(ticketId);
@@ -54,8 +67,9 @@ export default function StudentHomeScreen() {
       setConflictTicket(existing);
       return;
     }
-    if (office.acceptingTickets === false || !office.services.length) {
-      showToast(office.acceptingTickets === false ? 'This office is closed to new tickets.' : 'There are no available services at this office.', 'warning');
+    if (office.acceptingTickets === false) {
+      triggerHaptic('warning');
+      showToast(`${office.name} is currently not accepting new tickets.`, 'warning');
       return;
     }
     triggerHaptic('light');
@@ -65,15 +79,19 @@ export default function StudentHomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => {
-          setRefreshing(true);
-          try { await refresh(); } finally { setRefreshing(false); }
-        }} />}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncingLive}
+            onRefresh={() => {
+              void refreshLiveQueue();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Top Header Row */}
-        {!!syncError && <Text accessibilityRole="button" onPress={() => void refresh()}>{syncError} Tap to retry.</Text>}
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             <View style={styles.metaRow}>
@@ -113,6 +131,23 @@ export default function StudentHomeScreen() {
           </View>
         </View>
 
+        {/* Live Sync Error Banner */}
+        {liveSyncError ? (
+          <Pressable
+            onPress={() => {
+              triggerHaptic('light');
+              void refreshLiveQueue();
+            }}
+            style={styles.syncErrorCard}
+          >
+            <Feather name="wifi-off" size={16} color={Colors.danger} />
+            <View style={styles.syncErrorCopy}>
+              <Text style={styles.syncErrorTitle}>{liveSyncError}</Text>
+              <Text style={styles.syncErrorSub}>Tap to refresh live queue data</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         {/* Live Active Ticket Hero Banner */}
         {primaryActive ? (
           <Pressable
@@ -130,17 +165,22 @@ export default function StudentHomeScreen() {
               <View style={styles.heroLeft}>
                 <View style={styles.liveTagRow}>
                   <RadarPulseDot color={Colors.matcha} size={10} />
-                  <Text style={styles.liveTagText}>LIVE ACTIVE TICKET</Text>
+                  <Text style={styles.liveTagText}>
+                    {primaryIsServing ? 'YOUR TURN NOW' : 'LIVE ACTIVE TICKET'}
+                  </Text>
                 </View>
 
                 <View style={styles.heroStatsRow}>
                   <Text style={styles.heroTicketNumber}>{primaryActive.ticketNumber}</Text>
                   <View style={styles.heroMetaCol}>
                     <Text style={styles.heroAheadText}>
-                      {primaryActive.aheadCount === 0
-                        ? 'Your Turn Now!'
-                        : `${primaryActive.aheadCount} ${primaryActive.aheadCount === 1 ? 'student' : 'students'
-                        } ahead`}
+                      {primaryIsServing
+                        ? 'Proceed to counter!'
+                        : primaryActive.aheadCount === 0
+                          ? `Next in line • ~${primaryActive.estWaitMins}m`
+                          : `${primaryActive.aheadCount} ${
+                              primaryActive.aheadCount === 1 ? 'student' : 'students'
+                            } ahead • ~${primaryActive.estWaitMins}m`}
                     </Text>
                     <Text style={styles.heroOfficeText}>
                       {primaryActive.shortOffice} • {primaryActive.counter}
@@ -159,43 +199,59 @@ export default function StudentHomeScreen() {
         {/* Section Header */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>CAMPUS OFFICES</Text>
-          <Text style={styles.sectionCount}>{offices.length} OPEN NOW</Text>
+          <Text style={styles.sectionCount}>{openOfficesCount} OPEN NOW</Text>
         </View>
 
         {/* Campus Office Cards */}
         <View style={styles.officesList}>
-          {offices.length === 0 && !syncError && <Text>No offices are available.</Text>}
-          {offices.map((office) => {
-            const activeForOffice = activeTickets.find((t) => t.officeId === office.id);
-            return (
-              <OfficeCard
-                key={office.id}
-                office={office}
-                activeTicket={activeForOffice}
-                onPressCard={handleRequestTicketTrigger}
-                onPressActiveTicket={(ticket) => {
-                  triggerHaptic('warning');
-                  setConflictTicket(ticket);
-                }}
-              />
-            );
-          })}
+          {isInitialLoading ? (
+            <View style={[styles.stateCard, Shadows.card]}>
+              <ActivityIndicator size="small" color={Colors.ink} />
+              <Text style={styles.stateCardTitle}>Loading campus offices...</Text>
+              <Text style={styles.stateCardSub}>Syncing live queue counts and wait estimates.</Text>
+            </View>
+          ) : offices.length === 0 ? (
+            <View style={[styles.stateCard, Shadows.card]}>
+              <Feather name="layers" size={22} color={Colors.inkSoft} />
+              <Text style={styles.stateCardTitle}>No Campus Offices Available</Text>
+              <Text style={styles.stateCardSub}>
+                Pull down to refresh or check back when campus offices open.
+              </Text>
+            </View>
+          ) : (
+            offices.map((office) => {
+              const activeForOffice = activeTickets.find((t) => t.officeId === office.id);
+              return (
+                <OfficeCard
+                  key={office.id}
+                  office={office}
+                  activeTicket={activeForOffice}
+                  onPressCard={handleRequestTicketTrigger}
+                  onPressActiveTicket={(ticket) => {
+                    triggerHaptic('warning');
+                    setConflictTicket(ticket);
+                  }}
+                />
+              );
+            })
+          )}
         </View>
       </ScrollView>
 
       <RequestTicketSheet
         office={requestSheetOffice}
-        busy={isMutating}
         onClose={() => setRequestSheetOffice(null)}
-        onConfirm={async (serviceName, notes) => {
+        onConfirm={async ({ serviceId, serviceName, notes, requestId }) => {
           if (!requestSheetOffice) return;
           const issued = await issueTicket({
             officeId: requestSheetOffice.id,
+            serviceId,
             serviceName,
             notes,
+            requestId,
           });
-          setRequestSheetOffice(null);
           if (issued) {
+            setRequestSheetOffice(null);
             router.replace('/student/ticket');
           }
         }}
@@ -422,5 +478,50 @@ const styles = StyleSheet.create({
   },
   officesList: {
     gap: 12,
+  },
+  syncErrorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+    borderRadius: Radii.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  syncErrorCopy: {
+    flex: 1,
+  },
+  syncErrorTitle: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12,
+    color: Colors.danger,
+  },
+  syncErrorSub: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 11,
+    color: Colors.inkSoft,
+    marginTop: 1,
+  },
+  stateCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  stateCardTitle: {
+    fontFamily: Fonts.displayBold,
+    fontSize: 14,
+    color: Colors.ink,
+  },
+  stateCardSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 12,
+    color: Colors.inkSoft,
+    textAlign: 'center',
   },
 });

@@ -1,6 +1,7 @@
+import { configuredApiUrl } from '../config/api';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { apiOrigin, configuredApiUrl } from './apiClient';
+import { apiOrigin } from './apiClient';
 
 const key = 'campusqueue.session.v1';
 

@@ -1,0 +1,41 @@
+[
+  {
+    "staffId": "EMP-1042",
+    "password": "staff123",
+    "staffName": "Ms. Medonza",
+    "office": "ACLC Mandaue - Registrar",
+    "officeShort": "Registrar Office",
+    "defaultCounterWindow": "Window 2",
+    "role": "registrar_staff",
+    "loginId": "EMP-1042",
+    "fullName": "Ms. Medonza"
+  },
+  {
+    "staffId": "EMP-1043",
+    "password": "staff456",
+    "staffName": "Mr. Lim",
+    "office": "ACLC Mandaue - Registrar",
+    "officeShort": "Registrar Office",
+    "defaultCounterWindow": "Window 1",
+    "role": "registrar_staff",
+    "loginId": "EMP-1043",
+    "fullName": "Mr. Lim"
+  },
+  {
+    "fullName": "Manuel Cando",
+    "firstName": "Manuel",
+    "firstLetter": "M",
+    "holderShort": "Manuel C.",
+    "usn": "23000440130",
+    "studentId": "C23-01-6767-MAN121",
+    "program": "BSIT 4th Year",
+    "institution": "ACLC College of Mandaue",
+    "campusShort": "ACLC Mandaue",
+    "email": "",
+    "pushAlerts": true,
+    "soundAndHaptics": true,
+    "loginId": "23000440130",
+    "role": "student",
+    "password": "student123"
+  }
+]

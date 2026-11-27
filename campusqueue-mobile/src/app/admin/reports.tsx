@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,31 +13,50 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdminRecordDetailModal } from '../../components/admin/AdminRecordDetailModal';
+import { AdminReportsSkeleton } from '../../components/admin/AdminSkeleton';
 import { ExportSystemReportModal } from '../../components/admin/ExportSystemReportModal';
-import { manilaDateString, useAdmin } from '../../context/AdminContext';
+import { useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows, getTicketStatusBadgeStyle } from '../../theme/tokens';
 import { AdminAuditRecord, AuditOutcome } from '../../types/admin';
+import { manilaDateString } from '../../utils/waitTime';
 
 const OUTCOME_FILTERS: ('All Outcomes' | AuditOutcome)[] = [
   'All Outcomes',
   'Completed',
   'Skipped',
   'Cancelled',
-  'Activity',
 ];
 
 const PAGE_SIZE = 25;
+
+function formatAvgDuration(totalSeconds: number, count: number): string {
+  if (!count) return '00m 00s';
+  const avg = Math.round(totalSeconds / count);
+  const mins = String(Math.floor(avg / 60)).padStart(2, '0');
+  const secs = String(avg % 60).padStart(2, '0');
+  return `${mins}m ${secs}s`;
+}
 
 /**
  * Screen 4.4: System Audit Trail & Daily Transaction Records (/admin/reports)
  */
 export default function AdminReportsScreen() {
-  const { offices, loadAuditRecords, downloadAnalyticsReport } = useAdmin();
+  const {
+    offices,
+    auditRecords,
+    isLoadingLive,
+    isLoadingLogs,
+    hasLoadedLive,
+    logsError,
+    fetchLiveAuditLogs,
+    downloadAnalyticsReport,
+  } = useAdmin();
   const { showToast, triggerHaptic } = useQueue();
 
-  const [startDate, setStartDate] = useState(() => manilaDateString(0));
-  const [endDate, setEndDate] = useState(() => manilaDateString(0));
+  const todayManila = useMemo(() => manilaDateString(0), []);
+  const [startDate, setStartDate] = useState(todayManila);
+  const [endDate, setEndDate] = useState(todayManila);
   const [officeFilter, setOfficeFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState<'All Outcomes' | AuditOutcome>('All Outcomes');
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,31 +65,20 @@ export default function AdminReportsScreen() {
   const [selectedRecord, setSelectedRecord] = useState<AdminAuditRecord | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
 
-  const [auditRecords, setAuditRecords] = useState<AdminAuditRecord[]>([]);
-  const [auditError, setAuditError] = useState('');
-  const [auditLoading, setAuditLoading] = useState(true);
-  const [retry, setRetry] = useState(0);
-  const dateRangeInvalid = !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate;
-  const officeFilters = [{ id: 'all', label: 'All Offices' }, ...offices.map((office) => ({ id: office.id, label: office.name }))];
+  const officeFilters = useMemo(
+    () => [
+      { id: 'all', label: 'All Offices' },
+      ...offices.map((o) => ({ id: o.id, label: o.name })),
+    ],
+    [offices]
+  );
+
+  const dateRangeInvalid = Boolean(startDate && endDate && startDate > endDate);
 
   useEffect(() => {
     if (dateRangeInvalid) return;
-    let current = true;
-    const timer = setTimeout(async () => {
-      setAuditLoading(true);
-      setAuditError('');
-      try {
-        const records = await loadAuditRecords(startDate, endDate, officeFilter);
-        if (current) setAuditRecords(records);
-      } catch (error) {
-        if (current) setAuditError(error instanceof Error ? error.message : 'Could not load activity.');
-      } finally {
-        if (current) setAuditLoading(false);
-      }
-    }, 250);
-    return () => { current = false; clearTimeout(timer); };
-  }, [dateRangeInvalid, endDate, loadAuditRecords, officeFilter, retry, startDate]);
+    void fetchLiveAuditLogs(startDate, endDate, officeFilter);
+  }, [dateRangeInvalid, endDate, fetchLiveAuditLogs, officeFilter, startDate]);
 
   const filteredRecords = useMemo(() => {
     if (dateRangeInvalid) return [];
@@ -96,8 +104,20 @@ export default function AdminReportsScreen() {
     [filteredRecords, page]
   );
 
-  const activeOfficeLabel = officeFilters.find((office) => office.id === officeFilter)?.label ?? 'All Offices';
-  const filterSummary = `${startDate} to ${endDate} • ${activeOfficeLabel}`;
+  const aggregates = useMemo(() => {
+    const waitSum = filteredRecords.reduce((acc, r) => acc + r.waitDurationSeconds, 0);
+    const completed = filteredRecords.filter((r) => r.serviceDurationSeconds > 0);
+    const serviceSum = completed.reduce((acc, r) => acc + r.serviceDurationSeconds, 0);
+    return {
+      count: filteredRecords.length,
+      avgWait: formatAvgDuration(waitSum, filteredRecords.length),
+      avgService: formatAvgDuration(serviceSum, completed.length),
+    };
+  }, [filteredRecords]);
+
+  const activeOfficeLabel =
+    officeFilters.find((o) => o.id === officeFilter)?.label ?? 'All Offices';
+  const filterSummary = `${startDate} to ${endDate} • ${activeOfficeLabel} • ${outcomeFilter}`;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -110,7 +130,6 @@ export default function AdminReportsScreen() {
           <Text style={styles.headerSub}>Historical transactions & SLA evaluation</Text>
         </View>
         <Pressable
-          disabled={dateRangeInvalid}
           onPress={() => {
             triggerHaptic('light');
             setShowExportModal(true);
@@ -127,22 +146,31 @@ export default function AdminReportsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoadingLive}
+            onRefresh={() => {
+              void fetchLiveAuditLogs(startDate, endDate, officeFilter);
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Filtered Aggregate Strip */}
         <View style={[styles.aggregateStrip, Shadows.heroDark]}>
           <View style={styles.aggItem}>
             <Text style={styles.aggLabel}>MATCHING</Text>
-            <Text style={styles.aggValueMatcha}>{filteredRecords.length}</Text>
+            <Text style={styles.aggValueMatcha}>{aggregates.count}</Text>
           </View>
           <View style={styles.aggDivider} />
           <View style={styles.aggItem}>
             <Text style={styles.aggLabel}>AVG WAIT</Text>
-            <Text style={styles.aggValue}>—</Text>
+            <Text style={styles.aggValue}>{aggregates.avgWait}</Text>
           </View>
           <View style={styles.aggDivider} />
           <View style={styles.aggItem}>
             <Text style={styles.aggLabel}>AVG SERVICE</Text>
-            <Text style={styles.aggValue}>—</Text>
+            <Text style={styles.aggValue}>{aggregates.avgService}</Text>
           </View>
         </View>
 
@@ -180,8 +208,9 @@ export default function AdminReportsScreen() {
           <View style={styles.presetRow}>
             <Pressable
               onPress={() => {
-                setStartDate(manilaDateString(0));
-                setEndDate(manilaDateString(0));
+                const today = manilaDateString(0);
+                setStartDate(today);
+                setEndDate(today);
                 setPage(1);
               }}
               style={styles.presetChip}
@@ -190,18 +219,19 @@ export default function AdminReportsScreen() {
             </Pressable>
             <Pressable
               onPress={() => {
-                setStartDate(manilaDateString(-1));
+                setStartDate(manilaDateString(-6));
                 setEndDate(manilaDateString(0));
                 setPage(1);
               }}
               style={styles.presetChip}
             >
-              <Text style={styles.presetText}>Last 2 Days</Text>
+              <Text style={styles.presetText}>Last 7 Days</Text>
             </Pressable>
             <Pressable
               onPress={() => {
-                setStartDate(manilaDateString(0).slice(0, 8) + '01');
-                setEndDate(manilaDateString(0));
+                const today = manilaDateString(0);
+                setStartDate(`${today.slice(0, 8)}01`);
+                setEndDate(today);
                 setPage(1);
               }}
               style={styles.presetChip}
@@ -281,9 +311,7 @@ export default function AdminReportsScreen() {
           </ScrollView>
         </View>
 
-        {/* Error State */}
-        {auditError && !dateRangeInvalid && <Text accessibilityRole="button" onPress={() => setRetry((attempt) => attempt + 1)}>{auditError} Tap to retry.</Text>}
-        {auditLoading && !dateRangeInvalid && <ActivityIndicator accessibilityLabel="Loading activity logs" />}
+        {/* Error / Loading Skeleton / Empty / Records State */}
         {dateRangeInvalid ? (
           <View style={styles.errorCard}>
             <Feather name="alert-circle" size={18} color={Colors.danger} />
@@ -291,15 +319,34 @@ export default function AdminReportsScreen() {
               Error querying transaction records. Please narrow your date range and retry.
             </Text>
           </View>
-        ) : paginatedRecords.length === 0 ? (
-          <View style={[styles.emptyCard, Shadows.card]}>
-            <Feather name="file-text" size={24} color={Colors.inkMuted} />
-            <Text style={styles.emptyText}>
-              No transaction records found for the selected date range and filters.
-            </Text>
-          </View>
         ) : (
           <>
+            {logsError ? (
+              <Pressable
+                onPress={() => {
+                  triggerHaptic('light');
+                  void fetchLiveAuditLogs(startDate, endDate, officeFilter);
+                }}
+                style={styles.errorCard}
+              >
+                <Feather name="alert-triangle" size={18} color={Colors.danger} />
+                <Text style={styles.errorText}>
+                  Unable to load activity logs ({logsError}). Tap to retry.
+                </Text>
+              </Pressable>
+            ) : null}
+
+            {isLoadingLogs || ((isLoadingLive || !hasLoadedLive) && auditRecords.length === 0) ? (
+              <AdminReportsSkeleton />
+            ) : paginatedRecords.length === 0 ? (
+              <View style={[styles.emptyCard, Shadows.card]}>
+                <Feather name="file-text" size={24} color={Colors.inkMuted} />
+                <Text style={styles.emptyText}>
+                  No transaction records found for the selected date range and filters.
+                </Text>
+              </View>
+            ) : (
+              <>
             {paginatedRecords.map((rec) => {
               const badge = getTicketStatusBadgeStyle(rec.outcome);
               return (
@@ -368,6 +415,8 @@ export default function AdminReportsScreen() {
                 </Pressable>
               </View>
             ) : null}
+              </>
+            )}
           </>
         )}
       </ScrollView>
@@ -384,8 +433,11 @@ export default function AdminReportsScreen() {
         records={filteredRecords}
         filterSummary={filterSummary}
         onClose={() => setShowExportModal(false)}
-        onLiveDownload={(format) => downloadAnalyticsReport(startDate, endDate, format, officeFilter)}
-        onExported={() => showToast('Analytics report ready.', 'matcha')}
+        onLiveDownload={(fmt) => downloadAnalyticsReport(startDate, endDate, fmt, officeFilter)}
+        onExported={(count) => {
+          triggerHaptic('success');
+          showToast(`Master transaction report exported (${count} records).`, 'matcha');
+        }}
       />
     </SafeAreaView>
   );
