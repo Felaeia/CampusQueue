@@ -76,6 +76,7 @@ const EMPTY_STAFF_PROFILE: StaffAccountRecord = {
 export interface QueueContextValue {
   liveRole: LiveRole | null;
   liveLoginId: string;
+  isRestoringSession: boolean;
   isSyncingLive: boolean;
   isMutatingLive: boolean;
   hasLoadedLive: boolean;
@@ -83,7 +84,8 @@ export interface QueueContextValue {
   refreshLiveQueue: (includeLogs?: boolean, silent?: boolean) => Promise<void>;
   liveSignIn: (
     loginId: string,
-    password: string
+    password: string,
+    rememberMe?: boolean
   ) => Promise<{ role: LiveRole; name?: string }>;
   liveChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   liveVerify: (
@@ -255,6 +257,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
   const value: QueueContextValue = {
     liveRole: live.role,
     liveLoginId: live.loginId,
+    isRestoringSession: live.isRestoringSession,
     isSyncingLive: live.isSyncing,
     isMutatingLive: live.isMutating,
     hasLoadedLive: live.hasLoaded,

@@ -7,8 +7,9 @@ import { useQueue } from '../../context/QueueContext';
 import { Colors } from '../../theme/tokens';
 
 export default function StudentLayout() {
-  const { liveEnabled, liveRole } = useQueue();
-  if (liveEnabled && liveRole !== 'student') return <Redirect href="/auth/login" />;
+  const { liveRole, isRestoringSession } = useQueue();
+  if (isRestoringSession) return <View style={styles.container} />;
+  if (liveRole !== 'student') return <Redirect href="/auth/login" />;
   return (
     <View style={styles.container}>
       <Stack
