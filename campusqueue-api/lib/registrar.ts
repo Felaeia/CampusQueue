@@ -392,35 +392,131 @@ export async function changeDesk(actor: Actor, input: Record<string, unknown>, l
 export async function verifyTicket(actor: Actor, input: Record<string, unknown>, legacy: boolean) {
   staffScope(actor, input, legacy);
   const method = input.qrPayload == null ? "manual_usn_check" : "qr_scan";
-  const qr = method === "qr_scan" ? text(input.qrPayload, "qrPayload") : null;
+  const qr = method === "qr_scan" ? text(input.qrPayload, "qrPayload", 256) : null;
   const ticketNumber = qr ? null : text(input.ticketNumber, "ticketNumber", 40).toUpperCase();
   const suffix = qr ? null : text(input.usnSuffix, "usnSuffix", 4);
   if (suffix && !/^\d{4}$/.test(suffix)) throw new ApiError(400, "Enter four student number digits");
+
+  let parsedQrTicketId: string | null = null;
+  if (qr) {
+    const match = /^cq:v1:([a-zA-Z0-9_-]+):([a-zA-Z0-9_-]+)$/.exec(qr);
+    if (!match) {
+      throw new ApiError(400, "Invalid CampusQueue QR code format.");
+    }
+    parsedQrTicketId = match[1];
+  }
 
   return adminDb().runTransaction(async (tx) => {
     const profile = await requireCurrent(tx, actor);
     const { name, officeId, desk, office } = scope(profile, input.counter, input.officeId);
     const [deskSnap, officeSnap] = await tx.getAll(desk, office);
     const data = deskSnap.data();
-    if (data?.archivedAt || !officeSnap.exists || officeSnap.data()?.archivedAt) throw new ApiError(404, "Counter is unavailable");
-    if (!data?.ticketId) throw new ApiError(404, "No ticket is being served at this counter");
-    const snap = await tx.get(ticketRef(data.ticketId));
-    const ticket = snap.data();
-    if (!ticket || !["called", "serving"].includes(ticket.status) || ticket.officeId !== officeId || ticket.counter !== name ||
-        (qr ? typeof ticket.qrPayload !== "string" || !equalSecret(qr, ticket.qrPayload) :
-          ticket.ticketNumber !== ticketNumber || !ticket.studentUsn.endsWith(suffix))) {
-      throw new ApiError(404, "No matching ticket at this counter");
+    const config = officeSnap.data();
+    if (!data || data.archivedAt || !config || config.archivedAt) throw new ApiError(404, "Counter is unavailable");
+
+    // Resolve the target ticket directly when QR payload carries ticketId (enables clear wrong-office / completed / waiting errors)
+    let targetSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+    if (parsedQrTicketId) {
+      targetSnap = await tx.get(ticketRef(parsedQrTicketId));
+      if (!targetSnap.exists) {
+        throw new ApiError(404, "QR code is invalid or expired.");
+      }
+      const scanned = targetSnap.data()!;
+      if (typeof scanned.qrPayload !== "string" || !equalSecret(qr!, scanned.qrPayload)) {
+        throw new ApiError(404, "QR code is invalid or expired.");
+      }
+      if (scanned.officeId !== officeId) {
+        throw new ApiError(
+          403,
+          `Wrong office: ticket ${scanned.ticketNumber} belongs to ${scanned.officeName ?? scanned.officeId}.`,
+        );
+      }
+      if (!["waiting", "called", "serving"].includes(scanned.status)) {
+        const label = scanned.status === "no_show" ? "marked as no-show" : String(scanned.status).toLowerCase();
+        throw new ApiError(409, `Ticket ${scanned.ticketNumber} is already ${label}.`);
+      }
+      // If ticket is still waiting for this office and this online counter is free, promote it to SERVING right away
+      if (scanned.status === "waiting") {
+        if (data.ticketId && data.ticketId !== targetSnap.id) {
+          const activeDoc = await tx.get(ticketRef(data.ticketId));
+          const activeNum = activeDoc.data()?.ticketNumber ?? "another ticket";
+          throw new ApiError(409, `Ticket ${scanned.ticketNumber} is still waiting. Finish ${activeNum} first.`);
+        }
+        if (data.status !== "online") {
+          throw new ApiError(409, "Set your counter to Online before scanning waiting tickets.");
+        }
+        const timestamp = now();
+        const serverNow = FieldValue.serverTimestamp();
+        const servingByCounter = {
+          ...(config.servingByCounter ?? {}),
+          [name]: { ticketNumber: scanned.ticketNumber, calledAt: timestamp },
+        };
+        const serving = Object.values(servingByCounter) as { ticketNumber: string; calledAt: string }[];
+        serving.sort((a, b) => b.calledAt.localeCompare(a.calledAt));
+        tx.delete(waiting(officeId).doc(targetSnap.id));
+        tx.update(targetSnap.ref, {
+          status: "serving",
+          counter: name,
+          calledAt: timestamp,
+          startedAt: timestamp,
+          calledTimestamp: serverNow,
+          startedTimestamp: serverNow,
+          isQrVerified: true,
+          verifiedAt: timestamp,
+          verificationMethod: method,
+        });
+        tx.update(office, {
+          servingByCounter,
+          nowServing: serving[0]?.ticketNumber ?? scanned.ticketNumber,
+          waitingCount: Math.max(0, (config.waitingCount ?? 1) - 1),
+        });
+        tx.update(desk, { ticketId: targetSnap.id, assignedStaffUid: actor.uid, updatedAt: serverNow });
+        audit(tx, actor, "ticket_called", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
+        audit(tx, actor, "service_started", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
+        audit(tx, actor, "ticket_verified", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
+        return {
+          ...staffTicket(targetSnap.id, { ...scanned, status: "serving", calledAt: timestamp, startedAt: timestamp, counter: name }),
+          isQrVerified: true,
+          method,
+        };
+      }
+      if (scanned.counter && scanned.counter !== name) {
+        throw new ApiError(409, `Ticket ${scanned.ticketNumber} is assigned to ${scanned.counter}.`);
+      }
+      if (data.ticketId && data.ticketId !== targetSnap.id) {
+        throw new ApiError(409, `Counter ${name} is currently serving a different ticket.`);
+      }
+    } else {
+      // Manual lookup: check current counter ticket, or promote matching waiting ticket if counter is idle
+      if (!data.ticketId) {
+        throw new ApiError(404, "No ticket is currently being served at this counter.");
+      }
+      targetSnap = await tx.get(ticketRef(data.ticketId));
+      const ticket = targetSnap.data();
+      if (!ticket || !["called", "serving"].includes(ticket.status) || ticket.officeId !== officeId || ticket.counter !== name ||
+          ticket.ticketNumber !== ticketNumber || !ticket.studentUsn.endsWith(suffix!)) {
+        throw new ApiError(404, "Ticket number or USN last 4 digits do not match the currently serving pass.");
+      }
     }
-    if (ticket.isQrVerified && !legacy) throw new ApiError(409, "Ticket already verified");
-    if (!ticket.isQrVerified) {
-      const verifiedAt = now();
-      const startsService = legacy && ticket.status === "called";
-      tx.update(snap.ref, { isQrVerified: true, verifiedAt, verificationMethod: method,
-        ...(startsService ? { status: "serving", startedAt: verifiedAt, startedTimestamp: FieldValue.serverTimestamp() } : {}),
+
+    const ticket = targetSnap.data()!;
+    const verifiedAt = ticket.verifiedAt ?? now();
+    const serverNow = FieldValue.serverTimestamp();
+    const needsStart = ticket.status === "called";
+    if (!ticket.isQrVerified || needsStart) {
+      tx.update(targetSnap.ref, {
+        isQrVerified: true,
+        verifiedAt,
+        verificationMethod: ticket.verificationMethod ?? method,
+        ...(needsStart ? { status: "serving", startedAt: verifiedAt, startedTimestamp: serverNow } : {}),
       });
-      if (startsService) audit(tx, actor, "service_started", "ticket", snap.id, { officeId, ticketId: snap.id });
-      audit(tx, actor, "ticket_verified", "ticket", snap.id, { officeId, ticketId: snap.id });
+      if (needsStart) audit(tx, actor, "service_started", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
+      if (!ticket.isQrVerified) audit(tx, actor, "ticket_verified", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
     }
-    return { ...staffTicket(snap.id, ticket), isQrVerified: true, method };
+    return {
+      ...staffTicket(targetSnap.id, { ...ticket, status: "serving", startedAt: ticket.startedAt ?? verifiedAt }),
+      isQrVerified: true,
+      method,
+    };
   });
 }
