@@ -21,8 +21,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.CAMERA",
+      "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ]
     },
@@ -36,7 +35,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow CampusQueue to scan student digital queue pass QR codes."
+          "cameraPermission": "Allow CampusQueue to scan student digital queue pass QR codes.",
+          "recordAudioAndroid": false
         }
       ],
       [
@@ -51,11 +51,6 @@
       "expo-sharing"
     ],
     "extra": {
-      "router": {
-        "asyncRoutes": {
-          "web": true
-        }
-      },
       "eas": {
         "projectId": "6501ede8-ffa6-42e5-9dc7-742a9b2243c5"
       }
