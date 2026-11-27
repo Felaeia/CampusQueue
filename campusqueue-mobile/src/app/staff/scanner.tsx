@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -31,13 +31,13 @@ export default function StaffQRScanner() {
     completeCurrent,
     skipCurrent,
     cancelCurrent,
+    refreshDesk,
   } = useStaffQueue();
   const [permission, requestPermission] = useCameraPermissions();
 
   // Scanner Controls
   const [isScanning, setIsScanning] = useState(true);
   const [torchEnabled, setTorchEnabled] = useState(false);
-  const verifying = useRef(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [selectedOutcome, setSelectedOutcome] = useState<'Completed' | 'No-Show' | 'Cancelled'>(
@@ -54,15 +54,18 @@ export default function StaffQRScanner() {
   const [manualTicketNum, setManualTicketNum] = useState('');
   const [manualUsnLast4, setManualUsnLast4] = useState('');
 
+  useFocusEffect(
+    useCallback(() => {
+      void refreshDesk(false, true);
+    }, [refreshDesk])
+  );
 
   const officeTitle = activeStaff.officeShort || activeStaff.office || 'Campus Office';
   const expectedTicketCode = servingTicket?.ticketNumber ?? 'None called';
-  const expectedUsnSuffix = servingTicket?.usn.slice(-4) ?? 'Last 4 digits';
+  const expectedUsnSuffix = servingTicket?.usn.slice(-4) ?? '0000';
 
   // Verify QR payload or manual ticket/USN strictly against live `POST /api/staff`
   const verifyLive = async (data: Parameters<typeof liveVerify>[0]) => {
-    if (verifying.current) return;
-    verifying.current = true;
     setIsVerifying(true);
     try {
       setVerifiedTicket(await liveVerify(data));
@@ -71,7 +74,6 @@ export default function StaffQRScanner() {
       setErrorMessage(error instanceof Error ? error.message : 'Ticket verification failed.');
       triggerHaptic('warning');
     } finally {
-      verifying.current = false;
       setIsVerifying(false);
     }
   };
@@ -169,6 +171,60 @@ export default function StaffQRScanner() {
         showToast(`${finalizedNumber} ${verb} and archived to History.`, tone);
       }
       router.replace('/staff/registrar');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const handleFinalizeOutcome = async () => {
+    if (isCompleting) return;
+    setIsCompleting(true);
+    try {
+      const cleanRemarks = outcomeRemarks.trim();
+      let finalizedNumber: string | undefined;
+      let nextTicket: { ticketNumber: string } | undefined;
+
+      if (selectedOutcome === 'Completed') {
+        const res = await completeCurrent(true, cleanRemarks || undefined);
+        finalizedNumber = res.completedNumber;
+        nextTicket = res.nextTicket;
+      } else if (selectedOutcome === 'No-Show') {
+        const res = await skipCurrent(cleanRemarks || 'Student did not appear at counter');
+        finalizedNumber = res.skippedNumber;
+        nextTicket = res.nextTicket;
+      } else {
+        const res = await cancelCurrent(cleanRemarks || 'Cancelled by counter staff');
+        finalizedNumber = res.cancelledNumber;
+        nextTicket = res.nextTicket;
+      }
+
+      if (!finalizedNumber) return;
+      setVerifiedTicket(null);
+      setSelectedOutcome('Completed');
+      setOutcomeRemarks('');
+      triggerHaptic(selectedOutcome === 'Completed' ? 'success' : 'warning');
+
+      const verb =
+        selectedOutcome === 'Completed'
+          ? 'completed'
+          : selectedOutcome === 'No-Show'
+            ? 'marked as No-Show'
+            : 'cancelled';
+      const tone = selectedOutcome === 'Completed' ? 'matcha' : 'warning';
+
+      if (nextTicket) {
+        showToast(
+          `${finalizedNumber} ${verb}. Now serving ${nextTicket.ticketNumber}.`,
+          tone
+        );
+      } else {
+        showToast(`${finalizedNumber} ${verb} and archived to History.`, tone);
+      }
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/staff/registrar');
+      }
     } finally {
       setIsCompleting(false);
     }

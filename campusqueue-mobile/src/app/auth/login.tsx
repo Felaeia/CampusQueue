@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -20,7 +20,7 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
 /**
  * Screen 1: Unified Login Screen (/auth/login)
- * Inputs strictly initialize empty per prototype specification.
+ * Authenticates strictly against live `POST /api/auth` (JWT ID Token + Refresh Token).
  */
 export default function LoginScreen() {
   const { liveRole, restoring } = useQueue();
@@ -33,17 +33,29 @@ export default function LoginScreen() {
 
 function LoginForm() {
   const passwordInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
-  const pending = useRef(false);
-  const { liveSignIn, showToast, triggerHaptic, restoreError, restoreSession } = useQueue();
+  const { liveSignIn, liveRole, isRestoringSession, showToast, triggerHaptic } = useQueue();
+
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberSession, setRememberSession] = useState(true);
   const [showPwd, setShowPwd] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [focusedField, setFocusedField] = useState<'usn' | 'password' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (isRestoringSession || !liveRole) return;
+    router.replace(
+      liveRole === 'admin'
+        ? '/admin/dashboard'
+        : liveRole === 'registrar_staff' || liveRole === 'staff'
+          ? '/staff/registrar'
+          : '/student/home'
+    );
+  }, [isRestoringSession, liveRole, router]);
+
   const handleSignIn = async () => {
-    if (pending.current) return;
+    if (isLoading || isRestoringSession) return;
     setErrorMsg('');
     const trimmedId = identifier.trim();
     if (!/^[a-z0-9_-]{1,100}$/i.test(trimmedId) || trimmedId.startsWith('__')) {
@@ -57,15 +69,20 @@ function LoginForm() {
     pending.current = true;
     setIsLoading(true);
     try {
-      const result = await liveSignIn(trimmedId, password, rememberSession);
-      setPassword('');
+      const result = await liveSignIn(trimmedId, password, rememberMe);
       triggerHaptic('success');
       if (result.name) showToast(`Welcome back, ${result.name}!`, 'matcha');
+      router.replace(
+        result.role === 'admin'
+          ? '/admin/dashboard'
+          : result.role === 'registrar_staff' || result.role === 'staff'
+            ? '/staff/registrar'
+            : '/student/home'
+      );
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : 'Sign-in failed.');
       triggerHaptic('warning');
     } finally {
-      pending.current = false;
       setIsLoading(false);
     }
   };
@@ -86,6 +103,7 @@ function LoginForm() {
             <View style={styles.header}>
               <CampusQueueEmblem />
               <Text style={styles.brandTitle}>CampusQueue</Text>
+              <Text style={styles.brandSubtitle}>Live Campus Queue Portal</Text>
             </View>
 
             {/* Clean Minimal Unified Sign-In Card */}
@@ -157,23 +175,29 @@ function LoginForm() {
                 </View>
               </View>
 
-              {/* Remember Session & Forgot Password Row */}
+              {/* Remember Me & Forgot Password Row */}
               <View style={styles.optionsRow}>
-                {Platform.OS !== 'web' && <Pressable
-                  onPress={() => setRememberSession((prev) => !prev)}
+                <Pressable
+                  onPress={() => setRememberMe((prev) => !prev)}
+                  hitSlop={6}
                   style={styles.rememberRow}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: rememberMe }}
                 >
-                  <View style={[styles.checkbox, rememberSession && styles.checkboxChecked]}>
-                    {rememberSession ? (
-                      <Feather name="check" size={11} color={Colors.surface} />
-                    ) : null}
+                  <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
+                    {rememberMe ? <Feather name="check" size={11} color={Colors.surface} /> : null}
                   </View>
-                  <Text style={styles.rememberText}>Remember session</Text>
-                </Pressable>}
-
-                <Pressable onPress={() => {
-                  showToast('Contact your CampusQueue administrator to reset your password.', 'dark');
-                }} hitSlop={6}>
+                  <Text style={styles.rememberText}>Keep me signed in</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    showToast(
+                      'Contact your CampusQueue administrator to reset your password.',
+                      'dark'
+                    );
+                  }}
+                  hitSlop={6}
+                >
                   <Text style={styles.forgotLink}>Forgot Password?</Text>
                 </Pressable>
               </View>
@@ -189,21 +213,28 @@ function LoginForm() {
               {/* Primary Obsidian Sign In Button */}
               <Pressable
                 onPress={handleSignIn}
-                disabled={isLoading}
+                disabled={isLoading || isRestoringSession}
                 style={({ pressed }) => [
                   styles.signInButton,
-                  isLoading && styles.signInButtonDisabled,
-                  pressed && !isLoading && styles.signInButtonPressed,
+                  (isLoading || isRestoringSession) && styles.signInButtonDisabled,
+                  pressed && !isLoading && !isRestoringSession && styles.signInButtonPressed,
                 ]}
               >
-                {isLoading ? <ActivityIndicator size="small" color={Colors.matcha} /> : null}
-                <Text style={styles.signInText}>{isLoading ? 'Signing in...' : 'Sign In'}</Text>
+                {isLoading || isRestoringSession ? (
+                  <ActivityIndicator size="small" color={Colors.matcha} />
+                ) : null}
+                <Text style={styles.signInText}>
+                  {isRestoringSession
+                    ? 'Restoring session...'
+                    : isLoading
+                      ? 'Signing in...'
+                      : 'Sign In'}
+                </Text>
               </Pressable>
             </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
     </SafeAreaView>
   );
 }

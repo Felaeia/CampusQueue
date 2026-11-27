@@ -9,7 +9,6 @@ import React, {
 } from 'react';
 import { AppState } from 'react-native';
 
-import type { ApiDownload } from './apiClient';
 import { ADMIN_POLLING_INTERVAL_MS } from '../config/api';
 import {
   AdminAccount,
@@ -43,7 +42,6 @@ function rangeToDates(range: AdminDateRange): { startDate: string; endDate: stri
   }
   return { startDate: today, endDate: today };
 }
-
 
 
 interface LiveOfficeDoc {
@@ -204,11 +202,11 @@ function mapActivityLogsToAuditRecords(
       ? created.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
       : log.createdAt;
     const actionText = (log.action || 'event').toLowerCase();
-    const outcome = actionText === 'ticket_cancelled'
+    const outcome = actionText.includes('cancel')
       ? 'Cancelled'
-      : actionText === 'ticket_skipped' || actionText === 'ticket_no_show'
+      : actionText.includes('skip') || actionText.includes('no_show')
         ? 'Skipped'
-        : actionText === 'service_completed' ? 'Completed' : 'Activity';
+        : 'Completed';
     const actorAccount = log.actorId ? staffByUid.get(log.actorId) : undefined;
     const actorIdentifier =
       actorAccount?.loginId || actorAccount?.staffId || log.actorId || 'system';
@@ -217,26 +215,26 @@ function mapActivityLogsToAuditRecords(
     return {
       id: log.id,
       documentId: `activityLogs/${log.id}`,
-      ticketCode: log.ticketId || '—',
+      ticketCode: log.ticketId || log.targetId || log.id.slice(0, 8),
       dateKey,
       dateTimeLabel: `${dateKey} • ${timeLabel}`,
       officeId: log.officeId || 'campus',
       officeName:
         (log.officeId && officeNameById.get(log.officeId)) || log.officeId || 'Campus-Wide',
       serviceName: (log.action || 'System Event').replace(/_/g, ' '),
-      studentName: String(log.details?.studentName ?? '—'),
-      studentUsn: String(log.details?.usn ?? '—'),
+      studentName: String(log.details?.studentName ?? log.targetId ?? '—'),
+      studentUsn: String(log.details?.usn ?? log.targetId ?? '—'),
       outcome,
-      issuedAt: '—',
+      issuedAt: timeLabel,
       approachingAlertAt: '—',
       calledAt: '—',
       qrVerifiedAt: '—',
-      closedAt: outcome === 'Activity' ? '—' : timeLabel,
+      closedAt: timeLabel,
       waitDurationSeconds: 0,
       serviceDurationSeconds: 0,
-      waitDurationLabel: '—',
-      serviceDurationLabel: '—',
-      verificationMethod: '—',
+      waitDurationLabel: formatSec(0),
+      serviceDurationLabel: formatSec(0),
+      verificationMethod: actionText.includes('verified') ? 'QR Scan' : 'Manual',
       handledByStaffId: actorIdentifier,
       handledByStaffName: actorName,
       counterWindow: String(log.details?.counter ?? log.outcome ?? '—'),
@@ -248,7 +246,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const {
     liveRole,
     liveLoginId,
-    adminIdentity,
     liveAdminRequest,
     liveAdminDownload,
     showToast,
@@ -273,9 +270,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const activeRangeRef = useRef<AdminDateRange>('Today (Live)');
   const appStateRef = useRef<string>(AppState.currentState ?? 'active');
   const consecutiveFailuresRef = useRef(0);
-  const adminLoad = useRef(0);
-  const auditLoad = useRef(0);
-  const invalidate = useCallback(() => { adminLoad.current++; auditLoad.current++; }, []);
 
   const isLiveAdmin = liveRole === 'admin';
 
@@ -284,12 +278,12 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       id: liveLoginId || '',
       adminId: liveLoginId ? liveLoginId.toUpperCase() : '',
       password: '',
-      fullName: adminIdentity?.fullName ?? 'Administrator',
+      fullName: 'Administrator',
       email: '',
       role: 'admin',
       institution: '',
     }),
-    [adminIdentity, liveLoginId]
+    [liveLoginId]
   );
 
   const fetchAllAdminPages = useCallback(
@@ -321,7 +315,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const refreshAdminData = useCallback(
     async (range: AdminDateRange = activeRangeRef.current, silent = false) => {
       if (!isLiveAdmin) return;
-      const load = ++adminLoad.current;
       activeRangeRef.current = range;
       if (!silent) setIsLoadingLive(true);
       setLiveError(null);
@@ -341,11 +334,15 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         ]);
 
         // Wave 2: Directory accounts + recent activity logs (staggered to avoid saturating local dev/Firestore connections)
-        const [staffSettled, studentsSettled] = await Promise.allSettled([
+        const [staffSettled, studentsSettled, logsSettled] = await Promise.allSettled([
           fetchAllAdminPages<LiveAccountDoc>('resource=staff&archived=true&limit=100', 3, true),
           fetchAllAdminPages<LiveAccountDoc>('resource=students&archived=true&limit=100', 3, true),
+          fetchAllAdminPages<LiveActivityLogDoc>(
+            `resource=activity-logs&startDate=${startDate}&endDate=${endDate}&limit=50`,
+            1,
+            true
+          ),
         ]);
-        if (load !== adminLoad.current) return;
 
         const officeDocs =
           officesSettled.status === 'fulfilled' ? officesSettled.value : [];
@@ -373,6 +370,8 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
                 },
                 groups: { office: [], requestType: [], date: [] },
               };
+        const logDocs =
+          logsSettled.status === 'fulfilled' ? logsSettled.value : [];
 
         const extractReason = (res: PromiseSettledResult<unknown>, fallback: string) =>
           res.status === 'rejected'
@@ -386,12 +385,14 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           extractReason(staffSettled, 'Unable to sync staff directory.') ??
           extractReason(studentsSettled, 'Unable to sync student directory.');
         const nextAnalyticsErr = extractReason(analyticsSettled, 'Unable to sync campus telemetry.');
+        const nextLogsErr = extractReason(logsSettled, 'Unable to sync activity logs.');
 
         setOfficesError(nextOfficesErr);
         setUsersError(nextUsersErr);
+        if (nextLogsErr) setLogsError(nextLogsErr);
 
         const coreErr = nextOfficesErr ?? nextAnalyticsErr;
-        if (coreErr || nextUsersErr) {
+        if (coreErr || nextUsersErr || nextLogsErr) {
           consecutiveFailuresRef.current += 1;
         } else {
           consecutiveFailuresRef.current = 0;
@@ -416,7 +417,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
               `resource=counters&officeId=${encodeURIComponent(o.id)}&limit=100`,
               2,
               true
-            ),
+            ).catch(() => [] as LiveCounterDoc[]),
             liveAdminRequest<{
               items: {
                 id: string;
@@ -425,7 +426,11 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
                 docs?: string;
                 available?: boolean;
               }[];
-            }>(`resource=request-types&officeId=${encodeURIComponent(o.id)}`, undefined, 'GET', true),
+            }>(`resource=request-types&officeId=${encodeURIComponent(o.id)}`, undefined, 'GET', true).catch(
+              () => ({
+                items: o.services ?? [],
+              })
+            ),
           ]);
 
           const officeStaff = staffDocs.filter(
@@ -445,7 +450,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             const matchedStaff = assignedByUid ?? fallbackStaff;
 
             return {
-              id: c.id,
               label: c.name || c.id,
               status:
                 c.status === 'online' ? 'Online' : c.status === 'break' ? 'Break' : 'Closed',
@@ -552,25 +556,31 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           peakHours,
         };
 
-        if (load !== adminLoad.current) return;
+        const mappedLogs = mapActivityLogsToAuditRecords(
+          logDocs,
+          officeNameById,
+          staffByUid
+        );
+
         if (officesSettled.status === 'fulfilled') setOffices(hydratedOffices);
-        if (staffSettled.status === 'fulfilled' && studentsSettled.status === 'fulfilled') {
+        if (staffSettled.status === 'fulfilled' || studentsSettled.status === 'fulfilled') {
           setUsers(mappedUsers);
         }
-        if (analyticsSettled.status === 'fulfilled') {
+        if (logsSettled.status === 'fulfilled') {
+          setAuditRecords(mappedLogs);
+          setLogsError(null);
+        }
+        if (analyticsSettled.status === 'fulfilled' || officesSettled.status === 'fulfilled') {
           setLiveKpis((prev) => ({ ...prev, [range]: liveSnapshot }));
         }
       } catch (err) {
-        if (load !== adminLoad.current) return;
         consecutiveFailuresRef.current += 1;
         const msg = err instanceof Error ? err.message : 'Unable to sync campus telemetry.';
         setLiveError(msg);
         setOfficesError(msg);
       } finally {
-        if (load === adminLoad.current) {
-          setHasLoadedLive(true);
-          setIsLoadingLive(false);
-        }
+        setHasLoadedLive(true);
+        if (!silent) setIsLoadingLive(false);
       }
     },
     [fetchAllAdminPages, isLiveAdmin, liveAdminRequest]
@@ -582,7 +592,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return;
       if (startDate > endDate) return;
 
-      const load = ++auditLoad.current;
       setIsLoadingLogs(true);
       setLogsError(null);
       try {
@@ -599,13 +608,13 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           officeNameByIdRef.current,
           staffByUidRef.current
         );
-        if (load === auditLoad.current) setAuditRecords(mapped);
+        setAuditRecords(mapped);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : 'Unable to load activity logs for selected dates.';
-        if (load === auditLoad.current) setLogsError(message);
+        setLogsError(message);
       } finally {
-        if (load === auditLoad.current) setIsLoadingLogs(false);
+        setIsLoadingLogs(false);
       }
     },
     [fetchAllAdminPages, isLiveAdmin]
@@ -645,7 +654,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    timer = setTimeout(() => { void runPoll(true); }, 0);
+    void runPoll(true);
 
     const sub = AppState.addEventListener('change', (nextState) => {
       const prev = appStateRef.current;
@@ -658,14 +667,12 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       cancelled = true;
-      invalidate();
       if (timer) clearTimeout(timer);
       sub.remove();
     };
-  }, [invalidate, isLiveAdmin, refreshAdminData]);
+  }, [isLiveAdmin, refreshAdminData]);
 
   const logoutAdmin = useCallback(() => {
-    invalidate();
     consecutiveFailuresRef.current = 0;
     setHasLoadedLive(false);
     setIsLoadingLive(false);
@@ -678,13 +685,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     setUsers([]);
     setAuditRecords([]);
     setLiveKpis({});
-  }, [invalidate]);
-
-  useEffect(() => {
-    if (isLiveAdmin) return;
-    const timer = setTimeout(logoutAdmin, 0);
-    return () => clearTimeout(timer);
-  }, [isLiveAdmin, logoutAdmin]);
+  }, []);
 
   const liveWaitingSum = useMemo(
     () =>
@@ -918,7 +919,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const officeCounterIds = assignedOffice.windows.map((w) => w.id);
+        const officeCounterIds = assignedOffice.windows.map((w) => w.label);
         const defaultCounterWindow = officeCounterIds[0];
         await liveAdminRequest('resource=staff', {
           action: 'create',
@@ -951,10 +952,12 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       if (!office) return { ok: false, error: 'Selected office not found.' };
 
       try {
-        if (!office.windows.some((window) => window.id === defaultWindow)) {
-          return { ok: false, error: 'Select a counter assigned to this office.' };
-        }
-        const counterIds = [defaultWindow];
+        const availableLabels = office.windows.map((w) => w.label);
+        const counterIds = availableLabels.includes(defaultWindow)
+          ? availableLabels
+          : defaultWindow
+            ? [defaultWindow]
+            : availableLabels;
 
         await liveAdminRequest('resource=staff', {
           action: 'update',

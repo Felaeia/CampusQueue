@@ -5,6 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 import { AdminOfficeRecord, AdminUserRecord } from '../../types/admin';
 
+const FALLBACK_WINDOW_OPTIONS = ['Window 1', 'Window 2', 'Window 3'];
 
 interface EditUserRoleAndOfficeModalProps {
   user: AdminUserRecord | null;
@@ -26,6 +27,28 @@ function EditUserRoleAndOfficeModalForm({
   const [selectedOfficeId, setSelectedOfficeId] = useState(user?.assignedOfficeId ?? offices[0]?.id ?? '');
   const [selectedWindow, setSelectedWindow] = useState(user?.defaultWindow ?? '');
 
+  const selectedOffice = offices.find((o) => o.id === selectedOfficeId);
+  const windowOptions =
+    selectedOffice && selectedOffice.windows.length > 0
+      ? selectedOffice.windows.map((w) => w.label)
+      : FALLBACK_WINDOW_OPTIONS;
+
+  useEffect(() => {
+    if (user) {
+      const nextOfficeId = user.assignedOfficeId ?? offices[0]?.id ?? '';
+      const matchedOffice = offices.find((o) => o.id === nextOfficeId);
+      const nextWindows =
+        matchedOffice && matchedOffice.windows.length > 0
+          ? matchedOffice.windows.map((w) => w.label)
+          : FALLBACK_WINDOW_OPTIONS;
+      setSelectedOfficeId(nextOfficeId);
+      setSelectedWindow(
+        user.defaultWindow && nextWindows.includes(user.defaultWindow)
+          ? user.defaultWindow
+          : nextWindows[0]
+      );
+    }
+  }, [offices, user]);
 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -74,7 +97,16 @@ function EditUserRoleAndOfficeModalForm({
                 return (
                   <Pressable
                     key={office.id}
-                    onPress={() => { setSelectedOfficeId(office.id); setSelectedWindow(office.windows[0]?.id ?? ''); }}
+                    onPress={() => {
+                      setSelectedOfficeId(office.id);
+                      const nextWindows =
+                        office.windows.length > 0
+                          ? office.windows.map((w) => w.label)
+                          : FALLBACK_WINDOW_OPTIONS;
+                      if (!nextWindows.includes(selectedWindow)) {
+                        setSelectedWindow(nextWindows[0]);
+                      }
+                    }}
                     style={[styles.chip, active && styles.chipActive]}
                   >
                     <Text style={[styles.chipText, active && styles.chipTextActive]}>
@@ -89,8 +121,8 @@ function EditUserRoleAndOfficeModalForm({
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>Default Counter Window</Text>
             <View style={styles.chipRow}>
-              {windows.map((win) => {
-                const active = selectedWindow === win.id;
+              {windowOptions.map((win) => {
+                const active = selectedWindow === win;
                 return (
                   <Pressable
                     key={win.id}

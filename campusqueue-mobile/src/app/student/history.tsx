@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HistoryReceiptCard } from '../../components/history/HistoryReceiptCard';
@@ -30,6 +30,11 @@ export default function StudentHistoryScreen() {
   const [selectedReceipt, setSelectedReceipt] = useState<HistoryTicket | null>(null);
   const [requeueTarget, setRequeueTarget] = useState<HistoryTicket | null>(null);
 
+  useFocusEffect(
+    useCallback(() => {
+      void refreshLiveQueue(true, true);
+    }, [refreshLiveQueue])
+  );
 
   const filteredList = useMemo(() => {
     if (statusFilter === 'All') return historyTickets;
