@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -8,12 +9,13 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AddOrEditOfficeModal } from '../../components/admin/AddOrEditOfficeModal';
 import { AddOrEditServiceModal } from '../../components/admin/AddOrEditServiceModal';
+import { AdminOfficesSkeleton } from '../../components/admin/AdminSkeleton';
 import { ResetOfficeQueueSequenceModal } from '../../components/admin/ResetOfficeQueueSequenceModal';
 import { useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
@@ -27,6 +29,10 @@ export default function AdminOfficesScreen() {
   const { focusOfficeId } = useLocalSearchParams<{ focusOfficeId?: string }>();
   const {
     offices,
+    isLoadingLive,
+    hasLoadedLive,
+    officesError,
+    refreshAdminData,
     toggleOfficeStatus,
     toggleServiceStatus,
     saveOffice,
@@ -34,6 +40,12 @@ export default function AdminOfficesScreen() {
     resetOfficeSequence,
   } = useAdmin();
   const { triggerHaptic } = useQueue();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshAdminData(undefined, true);
+    }, [refreshAdminData])
+  );
 
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(() => ({
     registrar: true,
@@ -86,8 +98,35 @@ export default function AdminOfficesScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoadingLive}
+            onRefresh={() => {
+              void refreshAdminData();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
-        {offices.length === 0 ? (
+        {officesError ? (
+          <Pressable
+            onPress={() => {
+              triggerHaptic('light');
+              void refreshAdminData();
+            }}
+            style={[styles.errorCard, Shadows.card]}
+          >
+            <Feather name="alert-triangle" size={16} color={Colors.danger} />
+            <View style={styles.flex}>
+              <Text style={styles.errorCardTitle}>Unable to sync campus offices.</Text>
+              <Text style={styles.errorCardSub}>{officesError} Tap to retry.</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {(isLoadingLive || !hasLoadedLive) && offices.length === 0 ? (
+          <AdminOfficesSkeleton />
+        ) : offices.length === 0 ? (
           <View style={[styles.emptyCard, Shadows.card]}>
             <Feather name="layers" size={26} color={Colors.inkMuted} />
             <Text style={styles.emptyTitle}>No campus offices configured.</Text>
@@ -131,7 +170,7 @@ export default function AdminOfficesScreen() {
                       </View>
                     </View>
                     <Text style={styles.officeMeta}>
-                      {office.operatingHours} • Last Issued:{' '}
+                      {office.operatingHours ? `${office.operatingHours} • ` : ''}Last Issued:{' '}
                       <Text style={styles.monoStrong}>{lastIssuedLabel}</Text>
                     </Text>
                   </View>
@@ -491,5 +530,26 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: Colors.inkSoft,
     marginTop: 2,
+  },
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: Radii.card,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+  },
+  errorCardTitle: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+    color: Colors.danger,
+  },
+  errorCardSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 11.5,
+    color: Colors.inkSoft,
+    marginTop: 1,
   },
 });

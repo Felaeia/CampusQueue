@@ -7,8 +7,10 @@ import { useQueue } from '../../context/QueueContext';
 import { Colors } from '../../theme/tokens';
 
 export default function StaffLayout() {
-  const { liveEnabled, liveRole } = useQueue();
-  if (liveEnabled && liveRole !== 'registrar_staff') return <Redirect href="/auth/login" />;
+  const { liveRole, isRestoringSession } = useQueue();
+  if (isRestoringSession) return <View style={styles.container} />;
+  const isStaff = liveRole === 'staff' || liveRole === 'registrar_staff';
+  if (!isStaff) return <Redirect href="/auth/login" />;
   return (
     <View style={styles.container}>
       <Stack

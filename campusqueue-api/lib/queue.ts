@@ -77,6 +77,7 @@ export async function issueTicket(actor: Actor, input: Record<string, unknown>) 
   return adminDb().runTransaction(async (tx) => {
     const account = await requireCurrent(tx, actor);
     const [officeSnap, receiptSnap] = await tx.getAll(office, receipt);
+    const allCountersSnap = await tx.get(office.collection("counters"));
     if (receiptSnap.exists) {
       const previous = receiptSnap.data()!;
       if (previous.officeId !== id || (serviceId ? previous.serviceId !== serviceId : previous.service !== service) || previous.notes !== notes) {
@@ -92,12 +93,66 @@ export async function issueTicket(actor: Actor, input: Record<string, unknown>) 
     if (account.activeTickets?.[id]) throw new ApiError(409, "You already have an active ticket for this office");
     const chosen = config.services?.find((item: { id: string; name: string }) => serviceId ? item.id === serviceId : item.name === service);
     if (!chosen || chosen.archivedAt || chosen.available === false) throw new ApiError(400, "Service is unavailable");
+
     const sequence = (config.lastIssuedNumber ?? 0) + 1;
     const queueSequence = Math.max(config.lastQueueSequence ?? 0, config.lastIssuedNumber ?? 0) + 1;
-    const threshold = nearTurnThreshold(config);
-    const nearTurnNotified = threshold !== null && (config.waitingCount ?? 0) <= threshold;
     const ticketNumber = `${config.prefix}-${String(sequence).padStart(3, "0")}`;
     const issuedAt = now();
+
+    // Auto-promote into SERVING immediately when no one is waiting and an online counter is idle
+    const freeCounters = allCountersSnap.docs.filter((doc) => {
+      const c = doc.data();
+      return !c.archivedAt && c.status === "online" && !c.ticketId;
+    });
+    const preferredFreeCounter =
+      freeCounters.find((doc) => doc.id === config.windowLabel) ?? freeCounters[0];
+    const autoPromote = Boolean(preferredFreeCounter) && (config.waitingCount ?? 0) === 0;
+
+    if (autoPromote && preferredFreeCounter) {
+      const counterName = preferredFreeCounter.id;
+      const servingByCounter = {
+        ...(config.servingByCounter ?? {}),
+        [counterName]: { ticketNumber, calledAt: issuedAt },
+      };
+      const serverNow = FieldValue.serverTimestamp();
+      const data = {
+        uid, sequence, queueSequence, originalQueueSequence: queueSequence, ticketNumber, officeId: id, officeName: config.name,
+        shortOffice: config.shortLabel, counter: counterName,
+        status: "serving", service: chosen.name, serviceId: chosen.id, officeCode: config.prefix,
+        serviceSnapshot: { name: chosen.name, duration: chosen.duration, docs: chosen.docs ?? "", description: chosen.description ?? "" },
+        holderShort: account.holderShort ?? account.fullName,
+        studentName: account.fullName, studentUsn: account.usn, program: account.program ?? "",
+        serial: ticket.id, qrPayload: `cq:v1:${ticket.id}:${token}`, issuedAt,
+        calledAt: issuedAt, startedAt: issuedAt,
+        estWaitMins: 0, aheadCount: 0, nowServing: ticketNumber,
+        trackNodes: [], notes, isQrVerified: false, recallCount: 0, nearTurnNotified: true, requeueCount: 0,
+      };
+      tx.create(ticket, {
+        ...data,
+        issuedTimestamp: serverNow,
+        calledTimestamp: serverNow,
+        startedTimestamp: serverNow,
+      });
+      audit(tx, actor, "ticket_issued", "ticket", ticket.id, { officeId: id, ticketId: ticket.id });
+      audit(tx, actor, "ticket_called", "ticket", ticket.id, { officeId: id, ticketId: ticket.id });
+      audit(tx, actor, "service_started", "ticket", ticket.id, { officeId: id, ticketId: ticket.id });
+      const alert = notification(uid, "It is your turn", `Please proceed to ${counterName}.`, ticket.id);
+      tx.create(alert.ref, alert.data);
+      tx.create(receipt, { officeId: id, service: chosen.name, serviceId: chosen.id, notes, ticketId: ticket.id });
+      tx.update(profile, `activeTickets.${id}`, ticket.id);
+      tx.update(preferredFreeCounter.ref, { ticketId: ticket.id, updatedAt: serverNow });
+      tx.update(office, {
+        lastIssuedNumber: sequence,
+        lastQueueSequence: queueSequence,
+        waitingCount: 0,
+        servingByCounter,
+        nowServing: ticketNumber,
+      });
+      return { id: ticket.id, ...data };
+    }
+
+    const threshold = nearTurnThreshold(config);
+    const nearTurnNotified = threshold !== null && (config.waitingCount ?? 0) <= threshold;
     const data = {
       uid, sequence, queueSequence, originalQueueSequence: queueSequence, ticketNumber, officeId: id, officeName: config.name,
       shortOffice: config.shortLabel, counter: config.windowLabel,

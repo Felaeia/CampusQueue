@@ -1,16 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AdminDashboardSkeleton } from '../../components/admin/AdminSkeleton';
 import { CampusQueueBroadcastModal } from '../../components/admin/CampusQueueBroadcastModal';
 import { OfficeCongestionDrilldownModal } from '../../components/admin/OfficeCongestionDrilldownModal';
 import { RadarPulseDot } from '../../components/RadarPulseDot';
@@ -39,18 +41,24 @@ export default function AdminOverviewScreen() {
     broadcasts,
     logoutAdmin,
     isLoadingLive,
+    hasLoadedLive,
     liveError,
     refreshAdminData,
   } = useAdmin();
-  const { liveEnabled, bumpLoginReset, triggerHaptic } = useQueue();
+  const { bumpLoginReset, triggerHaptic } = useQueue();
 
   const [selectedRange, setSelectedRange] = useState<AdminDateRange>('Today (Live)');
   const [showRangeMenu, setShowRangeMenu] = useState(false);
-  const [isLoadingLocal, setIsLoadingLocal] = useState(false);
   const [drilldownOffice, setDrilldownOffice] = useState<AdminOfficeRecord | null>(null);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
 
-  const isLoading = isLoadingLive || isLoadingLocal;
+  useFocusEffect(
+    useCallback(() => {
+      void refreshAdminData(selectedRange, true);
+    }, [refreshAdminData, selectedRange])
+  );
+
+  const isLoading = isLoadingLive || (!hasLoadedLive && offices.length === 0 && !liveError);
   const hasError = Boolean(liveError);
 
   const kpi = useMemo(() => getKpiSnapshot(selectedRange), [getKpiSnapshot, selectedRange]);
@@ -65,22 +73,12 @@ export default function AdminOverviewScreen() {
     if (range === selectedRange) return;
     triggerHaptic('light');
     setSelectedRange(range);
-    if (liveEnabled) {
-      void refreshAdminData(range);
-    } else {
-      setIsLoadingLocal(true);
-      setTimeout(() => setIsLoadingLocal(false), 260);
-    }
+    void refreshAdminData(range);
   };
 
   const handleRetrySync = () => {
     triggerHaptic('light');
-    if (liveEnabled) {
-      void refreshAdminData(selectedRange);
-    } else {
-      setIsLoadingLocal(true);
-      setTimeout(() => setIsLoadingLocal(false), 300);
-    }
+    void refreshAdminData(selectedRange);
   };
 
   const handleSignOut = () => {
@@ -131,6 +129,15 @@ export default function AdminOverviewScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoadingLive}
+            onRefresh={() => {
+              void refreshAdminData(selectedRange);
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Date Range Selector & Broadcast CTA */}
         <View style={styles.controlsRow}>
@@ -199,14 +206,7 @@ export default function AdminOverviewScreen() {
 
         {/* Loading Skeleton State */}
         {isLoading ? (
-          <View style={styles.skeletonWrap}>
-            <View style={styles.bentoGrid}>
-              {[0, 1, 2, 3].map((idx) => (
-                <View key={idx} style={styles.skeletonKpi} />
-              ))}
-            </View>
-            <View style={styles.skeletonChart} />
-          </View>
+          <AdminDashboardSkeleton />
         ) : (
           <>
             {/* Empty Day Notice Banner (keeps KPIs & Live Office Monitor visible) */}
@@ -353,40 +353,46 @@ export default function AdminOverviewScreen() {
               </View>
             </View>
 
-            {/* Peak Hours Activity Chart (8 AM – 5 PM) */}
+            {/* Issuance Activity Chart (by date from live analytics) */}
             <View style={[styles.sectionCard, Shadows.card]}>
               <View style={styles.sectionHeader}>
                 <View>
-                  <Text style={styles.sectionTitle}>Peak Hours Activity</Text>
+                  <Text style={styles.sectionTitle}>Daily Issuance Activity</Text>
                   <Text style={styles.sectionSubtitle}>
-                    Hourly ticket issuance volume (8:00 AM – 5:00 PM)
+                    Live ticket volume grouped by date
                   </Text>
                 </View>
               </View>
 
-              <View style={styles.chartWrap}>
-                {kpi.peakHours.map((bucket) => {
-                  const heightPct = Math.max(8, Math.round((bucket.count / maxPeakCount) * 100));
-                  const isPeak = bucket.count === maxPeakCount;
-                  return (
-                    <View key={bucket.hourLabel} style={styles.barColumn}>
-                      <Text style={styles.barCount}>{bucket.count}</Text>
-                      <View style={styles.barTrack}>
-                        <View
-                          style={[
-                            styles.barFill,
-                            {
-                              height: `${heightPct}%`,
-                              backgroundColor: isPeak ? Colors.ink : Colors.registrar,
-                            },
-                          ]}
-                        />
+              {kpi.peakHours.length === 0 ? (
+                <Text style={styles.sectionSubtitle}>
+                  No ticket issuance activity recorded for this date range.
+                </Text>
+              ) : (
+                <View style={styles.chartWrap}>
+                  {kpi.peakHours.map((bucket) => {
+                    const heightPct = Math.max(8, Math.round((bucket.count / maxPeakCount) * 100));
+                    const isPeak = bucket.count === maxPeakCount;
+                    return (
+                      <View key={bucket.hourLabel} style={styles.barColumn}>
+                        <Text style={styles.barCount}>{bucket.count}</Text>
+                        <View style={styles.barTrack}>
+                          <View
+                            style={[
+                              styles.barFill,
+                              {
+                                height: `${heightPct}%`,
+                                backgroundColor: isPeak ? Colors.ink : Colors.registrar,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.barLabel}>{bucket.hourLabel}</Text>
                       </View>
-                      <Text style={styles.barLabel}>{bucket.hourLabel}</Text>
-                    </View>
-                  );
-                })}
-              </View>
+                    );
+                  })}
+                </View>
+              )}
             </View>
 
             {/* Recent Campus Broadcasts */}
