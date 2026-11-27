@@ -3,6 +3,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { HistoryTicket, StudentProfile } from '../../types/queue';
 import { Colors, Fonts, getTicketStatusBadgeStyle, Radii, Shadows } from '../../theme/tokens';
+import { formatDisplayTimestamp } from '../../utils/waitTime';
 
 interface ReceiptDetailModalProps {
   receipt: HistoryTicket | null;
@@ -57,15 +58,21 @@ export function ReceiptDetailModal({
 
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Issued At</Text>
-              <Text style={styles.detailValue}>{receipt.issuedAt}</Text>
+              <Text style={styles.detailValue}>
+                {formatDisplayTimestamp(receipt.issuedAt, 'datetime')}
+              </Text>
             </View>
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Called At</Text>
-              <Text style={styles.detailValue}>{receipt.calledAt}</Text>
+              <Text style={styles.detailValue}>
+                {formatDisplayTimestamp(receipt.calledAt, 'datetime')}
+              </Text>
             </View>
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Closed At</Text>
-              <Text style={styles.detailValue}>{receipt.timestamp}</Text>
+              <Text style={styles.detailValue}>
+                {formatDisplayTimestamp(receipt.timestamp, 'datetime')}
+              </Text>
             </View>
 
             <View style={styles.detailDivider} />

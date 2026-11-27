@@ -1,6 +1,6 @@
 import { audit } from "../lib/audit.ts";
 import { adminDb } from "../lib/firebaseAdmin.ts";
-import { newSession } from "../lib/firebaseSession.ts";
+import { accountIdentity, newSession } from "../lib/firebaseSession.ts";
 import { activeAccount, ApiError, body, endpoint, key, roleOf } from "../lib/http.ts";
 import { checkPassword } from "../lib/passwords.ts";
 
@@ -68,9 +68,6 @@ export default endpoint(["POST"], async (request) => {
   return {
     ...session,
     role: currentProfile.role,
-    ...(roleOf(currentProfile) === "staff" ? { staff: {
-      staffId: currentProfile.staffId, staffName: currentProfile.staffName, office: currentProfile.office,
-      officeShort: currentProfile.officeShort, officeId: currentProfile.officeId, defaultCounterWindow: currentProfile.defaultCounterWindow, role: currentProfile.role,
-    } } : {}),
+    ...accountIdentity(currentProfile, currentProfile.role),
   };
 });

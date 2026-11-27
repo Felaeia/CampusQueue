@@ -11,13 +11,10 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { Redirect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CampusQueueEmblem } from '../../components/CampusQueueEmblem';
-import { FirstLoginPasswordModal } from '../../components/login/FirstLoginPasswordModal';
-import { ForgotPasswordModal } from '../../components/login/ForgotPasswordModal';
-import { useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
@@ -26,26 +23,18 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
  * Inputs strictly initialize empty per prototype specification.
  */
 export default function LoginScreen() {
-  const { loginResetNonce } = useQueue();
-  return <LoginForm key={loginResetNonce} />;
+  const { liveRole, restoring } = useQueue();
+  if (restoring) return <ActivityIndicator accessibilityLabel="Restoring session" style={styles.flex} />;
+  if (liveRole) return <Redirect href={
+    liveRole === 'admin' ? '/admin/dashboard' : liveRole === 'student' ? '/student/home' : '/staff/registrar'
+  } />;
+  return <LoginForm />;
 }
 
 function LoginForm() {
-  const router = useRouter();
   const passwordInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
-  const { loginAdmin } = useAdmin();
-  const {
-    authDefaults,
-    studentProfile,
-    loginStudent,
-    loginStaff,
-    liveEnabled,
-    liveSignIn,
-    updatePassword,
-    showToast,
-    triggerHaptic,
-  } = useQueue();
-
+  const pending = useRef(false);
+  const { liveSignIn, showToast, triggerHaptic, restoreError, restoreSession } = useQueue();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [rememberSession, setRememberSession] = useState(true);
@@ -53,76 +42,32 @@ function LoginForm() {
   const [focusedField, setFocusedField] = useState<'usn' | 'password' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [showFirstLoginModal, setShowFirstLoginModal] = useState(false);
-  const [showForgotModal, setShowForgotModal] = useState(false);
-
   const handleSignIn = async () => {
-    if (isLoading) return;
+    if (pending.current) return;
     setErrorMsg('');
-
     const trimmedId = identifier.trim();
-    if (!trimmedId || !password) {
-      setErrorMsg('Please enter your USN / Staff ID and password.');
-      triggerHaptic('warning');
+    if (!/^[a-z0-9_-]{1,100}$/i.test(trimmedId) || trimmedId.startsWith('__')) {
+      setErrorMsg('Enter a valid USN or staff ID.');
       return;
     }
-
+    if (!password || password.length > 128) {
+      setErrorMsg('Enter your password (up to 128 characters).');
+      return;
+    }
+    pending.current = true;
     setIsLoading(true);
-    if (liveEnabled) {
-      try {
-        const result = await liveSignIn(trimmedId, password);
-        triggerHaptic('success');
-        if (result.name) showToast(`Welcome back, ${result.name}!`, 'matcha');
-        router.replace(
-          result.role === 'admin'
-            ? '/admin/dashboard'
-            : result.role === 'registrar_staff' || result.role === 'staff'
-              ? '/staff/registrar'
-              : '/student/home'
-        );
-      } catch (error) {
-        setErrorMsg(error instanceof Error ? error.message : 'Sign-in failed.');
-        triggerHaptic('warning');
-      } finally {
-        setIsLoading(false);
-      }
-      return;
-    }
-    setTimeout(() => {
-      setIsLoading(false);
-
-      const adminResult = loginAdmin(trimmedId, password);
-      if (adminResult.ok && adminResult.admin) {
-        triggerHaptic('success');
-        showToast(`Welcome back, ${adminResult.admin.fullName}!`, 'matcha');
-        router.replace('/admin/dashboard');
-        return;
-      }
-
-      const staffResult = loginStaff(trimmedId, password);
-      if (staffResult.ok && staffResult.staff) {
-        triggerHaptic('success');
-        showToast(`Welcome back, ${staffResult.staff.staffName}!`, 'matcha');
-        router.replace('/staff/registrar');
-        return;
-      }
-
-      const studentResult = loginStudent(trimmedId, password);
-      if (!studentResult.ok || !studentResult.profile) {
-        setErrorMsg('Invalid USN / Staff ID or password. Please try again.');
-        triggerHaptic('warning');
-        return;
-      }
-
-      if (studentResult.requiresPasswordChange) {
-        setShowFirstLoginModal(true);
-        return;
-      }
-
+    try {
+      const result = await liveSignIn(trimmedId, password, rememberSession);
+      setPassword('');
       triggerHaptic('success');
-      showToast(`Welcome back, ${studentResult.profile.firstName}!`, 'matcha');
-      router.replace('/student/home');
-    }, 400);
+      if (result.name) showToast(`Welcome back, ${result.name}!`, 'matcha');
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Sign-in failed.');
+      triggerHaptic('warning');
+    } finally {
+      pending.current = false;
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -141,7 +86,6 @@ function LoginForm() {
             <View style={styles.header}>
               <CampusQueueEmblem />
               <Text style={styles.brandTitle}>CampusQueue</Text>
-              <Text style={styles.brandSubtitle}>{studentProfile.institution}</Text>
             </View>
 
             {/* Clean Minimal Unified Sign-In Card */}
@@ -215,7 +159,7 @@ function LoginForm() {
 
               {/* Remember Session & Forgot Password Row */}
               <View style={styles.optionsRow}>
-                {!liveEnabled && <Pressable
+                {Platform.OS !== 'web' && <Pressable
                   onPress={() => setRememberSession((prev) => !prev)}
                   style={styles.rememberRow}
                 >
@@ -228,20 +172,17 @@ function LoginForm() {
                 </Pressable>}
 
                 <Pressable onPress={() => {
-                  if (liveEnabled) {
-                    showToast('Contact your CampusQueue administrator to reset your password.', 'dark');
-                  } else {
-                    setShowForgotModal(true);
-                  }
+                  showToast('Contact your CampusQueue administrator to reset your password.', 'dark');
                 }} hitSlop={6}>
                   <Text style={styles.forgotLink}>Forgot Password?</Text>
                 </Pressable>
               </View>
 
               {/* Inline Error Banner */}
-              {errorMsg ? (
+              {errorMsg || restoreError ? (
                 <View style={styles.errorBanner}>
-                  <Text style={styles.errorBannerText}>{errorMsg}</Text>
+                  <Text style={styles.errorBannerText}>{errorMsg || restoreError}</Text>
+                  {restoreError && !errorMsg && <Text onPress={() => void restoreSession()}>Retry saved session</Text>}
                 </View>
               ) : null}
 
@@ -263,34 +204,6 @@ function LoginForm() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <FirstLoginPasswordModal
-        visible={showFirstLoginModal}
-        defaultPassword={authDefaults.defaultPassword}
-        minLength={authDefaults.minPasswordLength}
-        onSkip={() => {
-          setShowFirstLoginModal(false);
-          triggerHaptic('success');
-          showToast(`Welcome back, ${studentProfile.firstName}!`, 'matcha');
-          router.replace('/student/home');
-        }}
-        onUpdatePassword={(newPwd) => {
-          updatePassword(newPwd);
-          setShowFirstLoginModal(false);
-          triggerHaptic('success');
-          showToast('Password updated successfully', 'matcha');
-          router.replace('/student/home');
-        }}
-      />
-
-      <ForgotPasswordModal
-        visible={showForgotModal}
-        onClose={() => setShowForgotModal(false)}
-        onSendResetLink={(email) => {
-          setShowForgotModal(false);
-          triggerHaptic('light');
-          showToast(`Password reset link sent to ${email}`, 'dark');
-        }}
-      />
     </SafeAreaView>
   );
 }

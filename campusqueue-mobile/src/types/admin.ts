@@ -12,7 +12,7 @@ export type AdminUserRole = 'staff' | 'student' | 'admin';
 
 export type AdminAccountStatus = 'active' | 'suspended';
 
-export type AuditOutcome = 'Completed' | 'Skipped' | 'Cancelled';
+export type AuditOutcome = 'Completed' | 'Skipped' | 'Cancelled' | 'Activity';
 
 export type BroadcastAudience =
   | 'All Active Waiting Students'
@@ -41,6 +41,7 @@ export interface AdminKpiSnapshot {
 }
 
 export interface AdminOfficeWindow {
+  id: string;
   label: string;
   status: AdminWindowStatus;
   staffName?: string;
@@ -68,7 +69,7 @@ export interface AdminOfficeRecord {
   dailyCapacityLimit?: number;
   lastIssuedNumber: number;
   activeWaitingCount: number;
-  avgWaitMinutes: number;
+  avgWaitMinutes?: number;
   themeColor: string;
   windows: AdminOfficeWindow[];
   services: AdminServiceItem[];
@@ -121,7 +122,7 @@ export interface AdminAuditRecord {
   serviceDurationSeconds: number;
   waitDurationLabel: string;
   serviceDurationLabel: string;
-  verificationMethod: 'QR Scan' | 'Manual';
+  verificationMethod: 'QR Scan' | 'Manual' | '—';
   handledByStaffId: string;
   handledByStaffName: string;
   counterWindow: string;
@@ -145,6 +146,7 @@ export interface SaveServiceInput {
 }
 
 export interface ProvisionUserInput {
+  password: string;
   role: 'staff' | 'admin';
   identifier: string;
   fullName: string;
@@ -157,17 +159,4 @@ export interface SendBroadcastInput {
   officeId?: string;
   title: string;
   message: string;
-}
-
-export interface AdminDataBundle {
-  adminAccounts: AdminAccount[];
-  kpisByRange: Record<AdminDateRange, AdminKpiSnapshot>;
-  offices: AdminOfficeRecord[];
-  users: AdminUserRecord[];
-  directoryTotalBadges: {
-    staff: number;
-    students: number;
-    admins: number;
-  };
-  auditRecords: AdminAuditRecord[];
 }

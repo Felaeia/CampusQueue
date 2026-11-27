@@ -49,7 +49,7 @@ In a development environment, set `ENABLE_DEMO_LOGIN=true` and run `npm run seed
 
 ## Connect the frontend
 
-Set `EXPO_PUBLIC_CAMPUSQUEUE_API_URL` in the mobile app's local `.env` to the Vercel base URL, without `/api`. For a local API use `http://localhost:3000` on web or a network-reachable host on a physical device. Restart Expo after changing the variable. With an API URL, the app requires a provisioned Firebase account, signs in with a USN or staff ID, and polls the API every five seconds. Without an API URL, it runs the existing demo.
+Set `EXPO_PUBLIC_CAMPUSQUEUE_API_URL` in the mobile app's local `.env` to the Vercel base URL, without `/api`. For a local API use `http://localhost:3000` on web or a network-reachable host on a physical device. Restart Expo after changing the variable. With an API URL, the app requires a provisioned Firebase account, signs in with a USN or staff ID, and refreshes foreground student and staff queues. A missing API URL is a sign-in configuration error.
 
 The existing Expo staff screen uses the legacy Registrar route. The shared staff API serves Accounting, Student Affairs, and any configured office. See [Frontend integration](#frontend-integration) for the screens that need to adopt the new functions. Session tokens are held in memory. Alerts are available through the in-app inbox.
 
@@ -210,7 +210,7 @@ $env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8085'
 
 The API requires a `demo-` project and loopback hosts when using the emulators. Run `npx vercel build` for a local build of the Vercel functions. For a staging deployment, configure the API project with the `campusqueue-api` root and the environment variables in `.env.example`. Set `FIREBASE_PRODUCTION_PROJECT_ID` on Vercel Preview so the backend can reject Preview requests that target the production Firestore project. Use separate Firebase service accounts and Web API keys for staging and production.
 
-The backend runs in Vercel Functions with no resident worker. Near-turn messages are written to the in-app inbox during queue operations. No background push sending or automatic expiration is configured. Account lists, shift reports, and analytics are bounded to conserve the Spark read/write budget. The Expo client's existing five-second polling can use staff `includeLogs=false` during desk refreshes, with logs fetched when their screen opens.
+The backend runs in Vercel Functions with no resident worker. Near-turn messages are written to the in-app inbox during queue operations. No background push sending or automatic expiration is configured. Account lists, shift reports, and analytics are bounded to conserve the Spark read/write budget. The Expo client polls the staff desk every 15 seconds with `includeLogs=false`, and the student overview every 30 seconds with `view=active`. It loads shift logs when that screen opens and suspends the queue polling when the app is backgrounded.
 
 ## Frontend integration
 

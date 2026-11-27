@@ -49,7 +49,7 @@ If PowerShell blocks the `npm.ps1` or `npx.ps1` launcher, use `npm.cmd` or `npx.
 
 ## 2. Configure Firebase for the authenticated API
 
-Live API workflows need Firebase credentials. The health check and the mobile demo can run on their own.
+Authenticated API workflows need Firebase credentials. The health endpoint can run independently.
 
 1. Open or create a development project in the [Firebase console](https://console.firebase.google.com/).
 2. Under **Firestore Database**, create the default database if it does not exist. The API queries the `offices` collection to verify connectivity. An empty database is enough for that check. [Firestore setup](https://firebase.google.com/docs/firestore/quickstart-server)
@@ -137,7 +137,9 @@ npm start
 - **iOS Simulator.** On macOS, press `i` in the Expo terminal or start it with `npm run ios`. [Expo device and simulator instructions](https://docs.expo.dev/get-started/start-developing/)
 - **Optional browser preview.** The repository has a web script. Install Expo's additional web dependencies from `campusqueue-mobile` first with `npx expo install react-dom react-native-web @expo/metro-runtime`, then run `npm run web`. Installing these packages updates the mobile package files. [Expo web setup](https://docs.expo.dev/workflow/web/)
 
-The app opens the CampusQueue sign-in screen. Set `EXPO_PUBLIC_CAMPUSQUEUE_API_URL` in the mobile environment file and restart Expo to use the live API. With the URL unset, the app uses its demo data. Use `Ctrl+C` in each terminal to stop its server.
+The app opens the CampusQueue sign-in screen. Copy `campusqueue-mobile/.env.example` to `campusqueue-mobile/.env`, set `EXPO_PUBLIC_CAMPUSQUEUE_API_URL` to the correct API origin, and restart Expo. Use the staging HTTPS origin for device verification and the production HTTPS origin only in production builds. For a locally hosted API, use a network-reachable address for the device. An unset or invalid URL produces a configuration error at sign-in.
+
+See the [mobile integration report](campusqueue-mobile/INTEGRATION_REPORT.md) for the API mapping, test commands, and deployment checks.
 
 ## Check your setup and troubleshoot
 

@@ -4,7 +4,7 @@ const session = {
   expiresIn: "3600",
 };
 
-// Public demo student fixture from campusqueue-mobile/src/data/mockData.json.
+// Public demo student fixture from migrations/demo-accounts.json.
 const demoSignIn = { action: "sign-in", loginId: "23000440130", password: "student123" };
 
 const desk = {

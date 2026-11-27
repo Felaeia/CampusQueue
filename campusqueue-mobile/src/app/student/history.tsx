@@ -1,24 +1,26 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HistoryReceiptCard } from '../../components/history/HistoryReceiptCard';
 import { ReceiptDetailModal } from '../../components/history/ReceiptDetailModal';
 import { RequeueConfirmModal } from '../../components/history/RequeueConfirmModal';
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { HistoryFilterOption, HistoryTicket } from '../../types/queue';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 
 export default function StudentHistoryScreen() {
+  useQueueFocus('student');
   const router = useRouter();
   const {
+    isSyncingLive,
+    refreshLiveQueue,
     studentProfile,
     offices,
     activeTickets,
     historyTickets,
     historyFilters,
-    historicalBasePassCount,
     issueTicket,
     showToast,
     triggerHaptic,
@@ -28,6 +30,7 @@ export default function StudentHistoryScreen() {
   const [selectedReceipt, setSelectedReceipt] = useState<HistoryTicket | null>(null);
   const [requeueTarget, setRequeueTarget] = useState<HistoryTicket | null>(null);
 
+
   const filteredList = useMemo(() => {
     if (statusFilter === 'All') return historyTickets;
     return historyTickets.filter(
@@ -35,13 +38,22 @@ export default function StudentHistoryScreen() {
     );
   }, [historyTickets, statusFilter]);
 
-  const totalPassesCount = historicalBasePassCount + historyTickets.length;
+  const totalPassesCount = historyTickets.length;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncingLive}
+            onRefresh={() => {
+              void refreshLiveQueue();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Header */}
         <View style={styles.headerRow}>
@@ -132,13 +144,16 @@ export default function StudentHistoryScreen() {
         target={requeueTarget}
         waitingCount={
           requeueTarget
-            ? offices.find((o) => o.id === requeueTarget.officeId)?.waitingCount ?? 3
-            : 3
+            ? offices.find((o) => o.id === requeueTarget.officeId)?.waitingCount ?? 0
+            : 0
         }
         onClose={() => setRequeueTarget(null)}
         onConfirm={async (target) => {
+          const office = offices.find((o) => o.id === target.officeId);
+          const matchedService = office?.services.find((s) => s.name === target.service);
           const issued = await issueTicket({
             officeId: target.officeId,
+            serviceId: matchedService?.id,
             serviceName: target.service,
             notes: 'Re-queued from history',
           });

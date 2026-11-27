@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChangePasswordModal } from '../../components/profile/ChangePasswordModal';
 import { LogoutConfirmModal } from '../../components/profile/LogoutConfirmModal';
-import { useQueue } from '../../context/QueueContext';
+import { useQueue, useQueueFocus } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 
 interface TactileSwitchProps {
@@ -30,14 +30,12 @@ function TactileSwitch({ value, onToggle, accessibilityLabel }: TactileSwitchPro
 }
 
 export default function StudentProfileScreen() {
+  useQueueFocus('student');
   const router = useRouter();
   const {
-    authDefaults,
+    minPasswordLength,
     studentProfile,
-    accountPassword,
-    liveEnabled,
     liveChangePassword,
-    updatePassword,
     togglePushAlerts,
     toggleSoundAndHaptics,
     bumpLoginReset,
@@ -112,7 +110,7 @@ export default function StudentProfileScreen() {
 
             <View style={styles.emailBlock}>
               <Text style={styles.gridLabel}>EMAIL</Text>
-              <Text style={styles.emailValue}>{studentProfile.email}</Text>
+              <Text style={styles.emailValue}>{studentProfile.email || 'Not provided'}</Text>
             </View>
           </View>
         </View>
@@ -195,12 +193,10 @@ export default function StudentProfileScreen() {
 
       <ChangePasswordModal
         visible={showChangePwdModal}
-        currentAccountPassword={liveEnabled ? undefined : accountPassword}
-        minLength={liveEnabled ? 8 : authDefaults.minPasswordLength}
+        minLength={minPasswordLength}
         onClose={() => setShowChangePwdModal(false)}
         onSavePassword={async (newPwd, currentPwd) => {
-          if (liveEnabled) await liveChangePassword(currentPwd, newPwd);
-          else updatePassword(newPwd);
+          await liveChangePassword(currentPwd, newPwd);
           setShowChangePwdModal(false);
           triggerHaptic('success');
           showToast('Password updated successfully', 'matcha');

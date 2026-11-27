@@ -1,0 +1,17 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_CAMPUSQUEUE_API_URL": "https://campusqueue-api.vercel.app"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  }
+}

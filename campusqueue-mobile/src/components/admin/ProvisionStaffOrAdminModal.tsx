@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -35,7 +35,11 @@ function suggestNextId(role: 'staff' | 'admin', existingUsers: AdminUserRecord[]
   return `${prefix}${String(candidate).padStart(digits, '0')}`;
 }
 
-export function ProvisionStaffOrAdminModal({
+export function ProvisionStaffOrAdminModal(props: ProvisionStaffOrAdminModalProps) {
+  return props.visible ? <ProvisionStaffOrAdminModalForm {...props} /> : null;
+}
+
+function ProvisionStaffOrAdminModalForm({
   visible,
   offices,
   existingUsers,
@@ -43,22 +47,15 @@ export function ProvisionStaffOrAdminModal({
   onProvision,
 }: ProvisionStaffOrAdminModalProps) {
   const [role, setRole] = useState<'staff' | 'admin'>('staff');
-  const [identifier, setIdentifier] = useState('');
+  const [identifier, setIdentifier] = useState(() => suggestNextId('staff', existingUsers));
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
   const [assignedOfficeId, setAssignedOfficeId] = useState(offices[0]?.id ?? '');
   const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setRole('staff');
-      setIdentifier(suggestNextId('staff', existingUsers));
-      setFullName('');
-      setEmail('');
-      setAssignedOfficeId(offices[0]?.id ?? '');
-      setErrorMsg('');
-    }
-  }, [existingUsers, offices, visible]);
 
   const handleRoleChange = (nextRole: 'staff' | 'admin') => {
     setRole(nextRole);
@@ -67,18 +64,29 @@ export function ProvisionStaffOrAdminModal({
   };
 
   const handleSubmit = async () => {
-    const res = await onProvision({
-      role,
-      identifier,
-      fullName,
-      email,
-      assignedOfficeId: role === 'staff' ? assignedOfficeId : undefined,
-    });
-    if (!res.ok) {
-      setErrorMsg(res.error ?? 'Failed to provision account.');
-      return;
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    try {
+      const res = await onProvision({
+        role,
+        password,
+        identifier,
+        fullName,
+        email,
+        assignedOfficeId: role === 'staff' ? assignedOfficeId : undefined,
+      });
+      if (!res.ok) {
+        setErrorMsg(res.error ?? 'Failed to provision account.');
+        return;
+      }
+      onClose();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to provision account.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
-    onClose();
   };
 
   return (
@@ -205,15 +213,10 @@ export function ProvisionStaffOrAdminModal({
               ) : null}
 
               {/* Initial Password Notice */}
-              <View style={styles.noticeBox}>
-                <Feather name="info" size={14} color={Colors.registrar} />
-                <Text style={styles.noticeText}>
-                  Default password will be set to{' '}
-                  <Text style={styles.monoInline}>
-                    {role === 'staff' ? 'staff123' : 'admin123'}
-                  </Text>{' '}
-                  with mandatory change on first login.
-                </Text>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Initial password *</Text>
+                <TextInput style={styles.input} secureTextEntry value={password} onChangeText={setPassword}
+                  maxLength={128} autoCapitalize="none" autoCorrect={false} />
               </View>
 
               {errorMsg ? (
@@ -231,6 +234,7 @@ export function ProvisionStaffOrAdminModal({
                 <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
               <Pressable
+                disabled={busy}
                 onPress={handleSubmit}
                 style={({ pressed }) => [styles.createBtn, pressed && styles.pressed]}
               >

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
@@ -10,23 +10,24 @@ interface LeaveQueueModalProps {
   ticket: ActiveTicket;
   reasons: string[];
   onClose: () => void;
+  busy?: boolean;
   onConfirmCancel: (reason: string) => void;
 }
 
-export function LeaveQueueModal({
+export function LeaveQueueModal(props: LeaveQueueModalProps) {
+  return props.visible ? <LeaveQueueModalForm key={props.ticket?.id} {...props} /> : null;
+}
+
+function LeaveQueueModalForm({
   visible,
   ticket,
   reasons,
   onClose,
   onConfirmCancel,
+  busy,
 }: LeaveQueueModalProps) {
   const [selectedReason, setSelectedReason] = useState(reasons[0] ?? 'No longer needed');
 
-  useEffect(() => {
-    if (visible) {
-      setSelectedReason(reasons[0] ?? 'No longer needed');
-    }
-  }, [reasons, visible]);
 
   return (
     <Modal
@@ -83,6 +84,7 @@ export function LeaveQueueModal({
               <Text style={styles.keepBtnText}>Keep My Spot</Text>
             </Pressable>
             <Pressable
+              disabled={busy}
               onPress={() => onConfirmCancel(selectedReason)}
               style={({ pressed }) => [styles.confirmBtn, pressed && styles.pressed]}
             >

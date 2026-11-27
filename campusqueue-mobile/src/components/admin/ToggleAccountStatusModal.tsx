@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
@@ -8,15 +8,39 @@ import { AdminUserRecord } from '../../types/admin';
 interface ToggleAccountStatusModalProps {
   user: AdminUserRecord | null;
   onClose: () => void;
-  onConfirm: (userId: string) => void;
+  onConfirm: (userId: string) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
-export function ToggleAccountStatusModal({
+export function ToggleAccountStatusModal(props: ToggleAccountStatusModalProps) {
+  return props.user ? <ToggleAccountStatusForm key={props.user.id} {...props} /> : null;
+}
+
+function ToggleAccountStatusForm({
   user,
   onClose,
   onConfirm,
 }: ToggleAccountStatusModalProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
   if (!user) return null;
+
+  const submit = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      const response = await onConfirm(user.id);
+      if (response.ok) onClose();
+      else setError(response.error ?? 'Could not update account status.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not update account status.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
 
   const isSuspending = user.status === 'active';
 
@@ -47,10 +71,11 @@ export function ToggleAccountStatusModal({
 
           <Text style={styles.body}>
             {isSuspending
-              ? 'Suspended users are immediately signed out and cannot request or manage queue tickets.'
+              ? 'Suspended users lose access to protected queue actions.'
               : 'Re-activating this account restores campus queue sign-in and portal access immediately.'}
           </Text>
 
+          {!!error && <Text accessibilityRole="alert">{error}</Text>}
           <View style={styles.actionsRow}>
             <Pressable
               onPress={onClose}
@@ -59,10 +84,8 @@ export function ToggleAccountStatusModal({
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              onPress={() => {
-                onConfirm(user.id);
-                onClose();
-              }}
+              disabled={busy}
+              onPress={submit}
               style={({ pressed }) => [
                 styles.confirmBtn,
                 { backgroundColor: isSuspending ? Colors.danger : Colors.ink },

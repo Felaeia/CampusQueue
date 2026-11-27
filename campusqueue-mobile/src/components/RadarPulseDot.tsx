@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 
 import { Colors } from '../theme/tokens';
@@ -9,7 +9,7 @@ interface RadarPulseDotProps {
 }
 
 export function RadarPulseDot({ color = Colors.matcha, size = 10 }: RadarPulseDotProps) {
-  const pulse = useRef(new Animated.Value(0)).current;
+  const [pulse] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const loop = Animated.loop(

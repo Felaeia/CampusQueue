@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
-import { Modal, Pressable, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
+import type { ApiDownload } from '../../context/apiClient';
+import { shareReport } from '../../context/shareReport';
 import { AdminAuditRecord } from '../../types/admin';
 
 interface ExportSystemReportModalProps {
@@ -11,7 +13,7 @@ interface ExportSystemReportModalProps {
   filterSummary: string;
   onClose: () => void;
   onExported: (recordCount: number) => void;
-  onLiveDownload?: (format: 'csv' | 'pdf') => Promise<string | null>;
+  onLiveDownload: (format: 'csv' | 'pdf') => Promise<ApiDownload>;
 }
 
 export function ExportSystemReportModal({
@@ -23,46 +25,25 @@ export function ExportSystemReportModal({
   onLiveDownload,
 }: ExportSystemReportModalProps) {
   const [format, setFormat] = useState<'CSV' | 'PDF'>('CSV');
-  const [includeAuditColumns, setIncludeAuditColumns] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
 
   const handleDownloadAndShare = async () => {
-    const livePayload = onLiveDownload
-      ? await onLiveDownload(format.toLowerCase() as 'csv' | 'pdf').catch(() => null)
-      : null;
-
-    const header = includeAuditColumns
-      ? 'Ticket,DateTime,Office,Service,StudentUSN,Outcome,Wait,ServiceTime,HandledBy'
-      : 'Ticket,DateTime,Office,Service,Outcome,Wait,ServiceTime';
-
-    const rows = records.map((r) =>
-      includeAuditColumns
-        ? `${r.ticketCode},"${r.dateTimeLabel}","${r.officeName}","${r.serviceName}",${r.studentUsn},${r.outcome},${r.waitDurationLabel},${r.serviceDurationLabel},${r.handledByStaffId}`
-        : `${r.ticketCode},"${r.dateTimeLabel}","${r.officeName}","${r.serviceName}",${r.outcome},${r.waitDurationLabel},${r.serviceDurationLabel}`
-    );
-
-    const payload =
-      livePayload ??
-      (format === 'CSV'
-        ? [header, ...rows].join('\n')
-        : [
-            'CampusQueue Master Transaction Report (PDF Executive Summary)',
-            `Filters: ${filterSummary}`,
-            `Total Matching Records: ${records.length}`,
-            `Audit Columns Included: ${includeAuditColumns ? 'Yes' : 'No'}`,
-            '',
-            ...rows.slice(0, 15),
-          ].join('\n'));
-
-    onClose();
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
     try {
-      await Share.share({
-        title: `CampusQueue_Master_Report.${format.toLowerCase()}`,
-        message: payload,
-      });
-    } catch {
-      // User dismissed native share sheet or unsupported environment
+      await shareReport(await onLiveDownload(format === 'CSV' ? 'csv' : 'pdf'));
+      onExported(records.length);
+      onClose();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to export the report.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
-    onExported(records.length);
   };
 
   return (
@@ -114,21 +95,8 @@ export function ExportSystemReportModal({
             })}
           </View>
 
-          {/* Audit Columns Toggle */}
-          <View style={styles.toggleRow}>
-            <View style={styles.flex}>
-              <Text style={styles.label}>Include Student USN & Staff Audit Columns</Text>
-              <Text style={styles.toggleHint}>
-                Includes USN, verification method, and handling staff ID
-              </Text>
-            </View>
-            <Switch
-              value={includeAuditColumns}
-              onValueChange={setIncludeAuditColumns}
-              trackColor={{ false: Colors.border, true: Colors.ink }}
-              thumbColor={includeAuditColumns ? Colors.matcha : Colors.surface}
-            />
-          </View>
+          <Text style={styles.toggleHint}>The backend exports analytics for the selected date range and office.</Text>
+          {!!error && <Text accessibilityRole="alert">{error}</Text>}
 
           <View style={styles.actionsRow}>
             <Pressable
@@ -138,11 +106,12 @@ export function ExportSystemReportModal({
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
+              disabled={busy}
               onPress={handleDownloadAndShare}
               style={({ pressed }) => [styles.exportBtn, pressed && styles.pressed]}
             >
               <Feather name="download" size={14} color={Colors.ink} />
-              <Text style={styles.exportText}>Download & Share</Text>
+              <Text style={styles.exportText}>{busy ? 'Downloading…' : 'Download & Share'}</Text>
             </Pressable>
           </View>
         </Pressable>

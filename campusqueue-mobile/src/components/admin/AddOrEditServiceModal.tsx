@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -24,43 +24,50 @@ interface AddOrEditServiceModalProps {
   onSave: (input: SaveServiceInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
-export function AddOrEditServiceModal({
+export function AddOrEditServiceModal(props: AddOrEditServiceModalProps) {
+  return props.visible ? <AddOrEditServiceModalForm key={props.editingService?.id} {...props} /> : null;
+}
+
+function AddOrEditServiceModalForm({
   visible,
   parentOfficeName,
   editingService,
   onClose,
   onSave,
 }: AddOrEditServiceModalProps) {
-  const [serviceName, setServiceName] = useState('');
-  const [durationText, setDurationText] = useState('10');
-  const [docsNote, setDocsNote] = useState('');
-  const [isActive, setIsActive] = useState(true);
+  const [serviceName, setServiceName] = useState(editingService?.name ?? '');
+  const [durationText, setDurationText] = useState(String(editingService?.estimatedDurationMinutes ?? 10));
+  const [docsNote, setDocsNote] = useState(editingService?.requiredDocumentsNote ?? '');
+  const [isActive, setIsActive] = useState(editingService?.isActive ?? true);
   const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setServiceName(editingService?.name ?? '');
-      setDurationText(String(editingService?.estimatedDurationMinutes ?? 10));
-      setDocsNote(editingService?.requiredDocumentsNote ?? '');
-      setIsActive(editingService?.isActive ?? true);
-      setErrorMsg('');
-    }
-  }, [editingService, visible]);
 
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
   const handleSave = async () => {
     const duration = parseInt(durationText.trim(), 10);
-    const res = await onSave({
-      id: editingService?.id,
-      name: serviceName,
-      estimatedDurationMinutes: Number.isFinite(duration) ? duration : 0,
-      requiredDocumentsNote: docsNote,
-      isActive,
-    });
-    if (!res.ok) {
-      setErrorMsg(res.error ?? 'Failed to save service.');
-      return;
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    try {
+      const res = await onSave({
+        id: editingService?.id,
+        name: serviceName,
+        estimatedDurationMinutes: Number.isFinite(duration) ? duration : 0,
+        requiredDocumentsNote: docsNote,
+        isActive,
+      });
+      if (!res.ok) {
+        setErrorMsg(res.error ?? 'Failed to save service.');
+        return;
+      }
+      onClose();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to save service.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
-    onClose();
   };
 
   return (
@@ -159,6 +166,7 @@ export function AddOrEditServiceModal({
                 <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
               <Pressable
+                disabled={busy}
                 onPress={handleSave}
                 style={({ pressed }) => [styles.saveBtn, pressed && styles.pressed]}
               >

@@ -19,6 +19,11 @@ export function OfficeCard({
   onPressActiveTicket,
 }: OfficeCardProps) {
   const hasActivePass = Boolean(activeTicket);
+  const isClosed = office.acceptingTickets === false;
+  const metaLabel =
+    [office.windowLabel, office.officerName].filter(Boolean).join(' • ') ||
+    office.description ||
+    'Active Campus Counter';
 
   return (
     <Pressable
@@ -47,14 +52,14 @@ export function OfficeCard({
               {office.name}
             </Text>
             <Text style={styles.officeMeta} numberOfLines={1}>
-              {office.windowLabel} • {office.officerName}
+              {metaLabel}
             </Text>
           </View>
         </View>
 
         <View style={[styles.crowdPill, { backgroundColor: office.crowdPillBg }]}>
           <Text style={[styles.crowdPillText, { color: office.crowdPillText }]}>
-            {office.crowdBadge}
+            {office.acceptingTickets === false ? 'Closed' : office.crowdBadge}
           </Text>
         </View>
       </View>
@@ -62,7 +67,7 @@ export function OfficeCard({
       <View style={styles.metricPanel}>
         <View style={styles.metricColLeft}>
           <Text style={styles.metricLabel}>NOW SERVING</Text>
-          <Text style={styles.metricServingValue}>{office.nowServing}</Text>
+          <Text style={styles.metricServingValue}>{office.nowServing || '—'}</Text>
         </View>
         <View style={styles.metricColRight}>
           <Text style={styles.metricLabel}>QUEUE LINE</Text>
@@ -82,6 +87,13 @@ export function OfficeCard({
             <Ionicons name="qr-code-outline" size={14} color={Colors.matcha} />
             <Text style={styles.activeCtaText}>Active: {activeTicket.ticketNumber}</Text>
           </Pressable>
+        ) : isClosed ? (
+          <View style={[styles.requestCta, { backgroundColor: Colors.surfaceMuted }]}>
+            <Feather name="lock" size={13} color={Colors.inkNeutral} />
+            <Text style={[styles.requestCtaText, { color: Colors.inkNeutral }]}>
+              Queue Closed
+            </Text>
+          </View>
         ) : (
           <Pressable
             onPress={() => onPressCard(office)}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -22,54 +22,41 @@ interface AddOrEditOfficeModalProps {
   onSave: (input: SaveOfficeInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
-export function AddOrEditOfficeModal({
+export function AddOrEditOfficeModal(props: AddOrEditOfficeModalProps) {
+  return props.visible ? <AddOrEditOfficeModalForm key={props.editingOffice?.id} {...props} /> : null;
+}
+
+function AddOrEditOfficeModalForm({
   visible,
   editingOffice,
   onClose,
   onSave,
 }: AddOrEditOfficeModalProps) {
-  const [officeName, setOfficeName] = useState('');
-  const [ticketPrefix, setTicketPrefix] = useState('');
-  const [locationDescription, setLocationDescription] = useState('');
-  const [windowCount, setWindowCount] = useState(2);
-  const [dailyCapacityLimit, setDailyCapacityLimit] = useState('');
+  const [officeName, setOfficeName] = useState(editingOffice?.name ?? '');
+  const [ticketPrefix, setTicketPrefix] = useState(editingOffice?.prefix ?? '');
+  const [locationDescription, setLocationDescription] = useState(editingOffice?.locationDescription ?? '');
+  const [windowCount, setWindowCount] = useState(editingOffice?.windowCount ?? 1);
   const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setOfficeName(editingOffice?.name ?? '');
-      setTicketPrefix(editingOffice?.prefix ?? '');
-      setLocationDescription(editingOffice?.locationDescription ?? '');
-      setWindowCount(editingOffice?.windowCount ?? 2);
-      setDailyCapacityLimit(
-        editingOffice?.dailyCapacityLimit != null ? String(editingOffice.dailyCapacityLimit) : ''
-      );
-      setErrorMsg('');
-    }
-  }, [editingOffice, visible]);
 
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
   const handleSave = async () => {
-    const parsedCap = dailyCapacityLimit.trim()
-      ? parseInt(dailyCapacityLimit.trim(), 10)
-      : undefined;
-    if (dailyCapacityLimit.trim() && (!Number.isFinite(parsedCap) || (parsedCap ?? 0) < 1)) {
-      setErrorMsg('Daily capacity limit must be a positive number.');
-      return;
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    try {
+      const res = await onSave({
+        id: editingOffice?.id, name: officeName, prefix: ticketPrefix, locationDescription, windowCount,
+      });
+      if (!res.ok) setErrorMsg(res.error ?? 'Failed to save office.');
+      else onClose();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to save office.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
-
-    const res = await onSave({
-      id: editingOffice?.id,
-      name: officeName,
-      prefix: ticketPrefix,
-      locationDescription,
-      windowCount,
-      dailyCapacityLimit: parsedCap,
-    });
-    if (!res.ok) {
-      setErrorMsg(res.error ?? 'Failed to save office.');
-      return;
-    }
-    onClose();
   };
 
   return (
@@ -105,18 +92,25 @@ export function AddOrEditOfficeModal({
               </View>
 
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Ticket Prefix (1–2 Uppercase Letters) *</Text>
+                <Text style={styles.label}>
+                  Ticket Prefix (1–4 Uppercase Letters){editingOffice ? ' (Fixed)' : ' *'}
+                </Text>
                 <TextInput
                   value={ticketPrefix}
+                  editable={!editingOffice}
                   onChangeText={(t) => {
-                    setTicketPrefix(t.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2));
+                    setTicketPrefix(t.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4));
                     if (errorMsg) setErrorMsg('');
                   }}
                   placeholder="e.g., A"
                   placeholderTextColor={Colors.inkMuted}
                   autoCapitalize="characters"
-                  maxLength={2}
-                  style={[styles.input, styles.monoInput]}
+                  maxLength={4}
+                  style={[
+                    styles.input,
+                    styles.monoInput,
+                    editingOffice && { opacity: 0.65 },
+                  ]}
                 />
               </View>
 
@@ -136,6 +130,7 @@ export function AddOrEditOfficeModal({
                   <Text style={styles.label}>Window Count (1–10)</Text>
                   <View style={styles.stepper}>
                     <Pressable
+                      disabled={!!editingOffice}
                       onPress={() => setWindowCount((c) => Math.max(1, c - 1))}
                       style={styles.stepperBtn}
                     >
@@ -143,6 +138,7 @@ export function AddOrEditOfficeModal({
                     </Pressable>
                     <Text style={styles.stepperVal}>{windowCount}</Text>
                     <Pressable
+                      disabled={!!editingOffice}
                       onPress={() => setWindowCount((c) => Math.min(10, c + 1))}
                       style={styles.stepperBtn}
                     >
@@ -151,17 +147,7 @@ export function AddOrEditOfficeModal({
                   </View>
                 </View>
 
-                <View style={[styles.fieldGroup, styles.flex]}>
-                  <Text style={styles.label}>Daily Capacity (Opt.)</Text>
-                  <TextInput
-                    value={dailyCapacityLimit}
-                    onChangeText={(t) => setDailyCapacityLimit(t.replace(/[^0-9]/g, ''))}
-                    placeholder="e.g., 120"
-                    placeholderTextColor={Colors.inkMuted}
-                    keyboardType="number-pad"
-                    style={[styles.input, styles.monoInput]}
-                  />
-                </View>
+
               </View>
 
               {errorMsg ? (
@@ -179,6 +165,7 @@ export function AddOrEditOfficeModal({
                 <Text style={styles.cancelText}>Cancel</Text>
               </Pressable>
               <Pressable
+                disabled={busy}
                 onPress={handleSave}
                 style={({ pressed }) => [styles.saveBtn, pressed && styles.pressed]}
               >
