@@ -8,6 +8,11 @@ import {
   apiFetchJson,
   getFriendlyApiError,
 } from '../services/apiClient';
+import {
+  clearPersistedSession,
+  loadPersistedSession,
+  savePersistedSession,
+} from '../services/sessionStorage';
 import { Colors, getOfficeAccent } from '../theme/tokens';
 import type {
   ActiveTicket,
@@ -25,6 +30,7 @@ import type {
   StaffQueueTicket,
   VerifiedTicketData,
 } from '../types/staff';
+import { getJwtExpiryMs, isJwtExpiringSoon } from '../utils/jwt';
 import {
   computeOfficeEstimatedWaitMins,
   computeStaffWaitingEstimateMins,
@@ -47,6 +53,7 @@ type Session = {
   loginId: string;
   uid?: string;
   staff?: StaffAccountRecord;
+  rememberMe: boolean;
 };
 
 type StudentState = {
@@ -171,8 +178,8 @@ function normalizeStudentState(
   );
   const historyTickets = (raw.historyTickets ?? []).map((item) => ({
     ...item,
-    calledAt: item.calledAt || 'â€”',
-    counter: item.counter || 'â€”',
+    calledAt: item.calledAt || '—',
+    counter: item.counter || '—',
   }));
   const notifications = (raw.notifications ?? []).map((item) => ({
     ...item,
@@ -234,6 +241,7 @@ export function useLiveQueue(
   const [student, setStudent] = useState<StudentState | null>(null);
   const [offices, setOffices] = useState<Office[]>([]);
   const officesRef = useRef<Office[]>([]);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -245,6 +253,19 @@ export function useLiveQueue(
   const seenCalled = useRef(new Map<string, number>());
   const prevActiveTickets = useRef(new Map<string, string>());
   const appStateRef = useRef<string>(AppState.currentState ?? 'active');
+
+  const persistSession = useCallback((session: Session, selectedCounter?: string) => {
+    void savePersistedSession({
+      tokens: session.tokens,
+      expires: session.expires,
+      role: session.role,
+      loginId: session.loginId,
+      uid: session.uid,
+      staff: session.staff,
+      counter: selectedCounter ?? counterRef.current,
+      rememberMe: session.rememberMe,
+    });
+  }, []);
 
   useEffect(() => {
     deskRef.current = desk;
@@ -259,6 +280,7 @@ export function useLiveQueue(
     latestLoad.current++;
     seenCalled.current.clear();
     prevActiveTickets.current.clear();
+    void clearPersistedSession();
     onCalled(null);
     setRole(null);
     setLoginId('');
@@ -279,7 +301,7 @@ export function useLiveQueue(
 
   const authorize = useCallback(
     async (session: Session, forceRefresh = false, silent = false) => {
-      if (forceRefresh || Date.now() >= session.expires - 60_000) {
+      if (forceRefresh || isJwtExpiringSoon(session.expires, 90_000)) {
         if (pendingRefresh.current?.session !== session) {
           const promise = apiFetchJson<Tokens>('session', {
             method: 'POST',
@@ -288,7 +310,8 @@ export function useLiveQueue(
           })
             .then((tokens) => {
               session.tokens = tokens;
-              session.expires = Date.now() + Number(tokens.expiresIn) * 1000;
+              session.expires = getJwtExpiryMs(tokens.idToken, tokens.expiresIn);
+              persistSession(session);
             })
             .catch((error) => {
               if (
@@ -311,7 +334,7 @@ export function useLiveQueue(
       }
       return session.tokens.idToken;
     },
-    [signOut]
+    [persistSession, signOut]
   );
 
   const authedRequest = useCallback(
@@ -548,6 +571,7 @@ export function useLiveQueue(
       setStaff(resolvedStaff);
       setLoginId(session.loginId);
       setRole(session.role);
+      persistSession(session, counterRef.current);
 
       return {
         role: session.role,
@@ -557,11 +581,11 @@ export function useLiveQueue(
           (session.role === 'admin' ? session.loginId.toUpperCase() : undefined),
       };
     },
-    [authedRequest, read]
+    [authedRequest, persistSession, read]
   );
 
   const signIn = useCallback(
-    async (rawLoginId: string, password: string) => {
+    async (rawLoginId: string, password: string, rememberMe = true) => {
       const cleanLoginId = rawLoginId.trim();
       const result = await apiFetchJson<
         Tokens & { role: LiveRole; staff?: StaffAccountRecord }
@@ -572,10 +596,11 @@ export function useLiveQueue(
 
       const session: Session = {
         tokens: result,
-        expires: Date.now() + Number(result.expiresIn) * 1000,
+        expires: getJwtExpiryMs(result.idToken, result.expiresIn),
         role: result.role,
         loginId: cleanLoginId,
         staff: result.staff,
+        rememberMe,
       };
 
       try {
@@ -587,6 +612,41 @@ export function useLiveQueue(
     },
     [hydrateSession, signOut]
   );
+
+  // Restore persisted JWT session automatically on mount
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      try {
+        const saved = await loadPersistedSession();
+        if (!saved || cancelled) return;
+
+        const session: Session = {
+          tokens: saved.tokens,
+          expires: saved.expires || getJwtExpiryMs(saved.tokens.idToken, saved.tokens.expiresIn),
+          role: saved.role,
+          loginId: saved.loginId,
+          uid: saved.uid,
+          staff: saved.staff,
+          rememberMe: saved.rememberMe,
+        };
+
+        await hydrateSession(session, saved.counter ?? '', true);
+      } catch (error) {
+        if (error instanceof ApiResponseError && [401, 403].includes(error.status)) {
+          await clearPersistedSession();
+        }
+        if (sessionRef.current) signOut();
+      } finally {
+        if (!cancelled) setIsRestoringSession(false);
+      }
+    };
+
+    void restore();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrateSession, signOut]);
 
   // Foreground resume & serialized REST polling with exponential backoff (never overlaps)
   useEffect(() => {
@@ -805,6 +865,7 @@ export function useLiveQueue(
     student,
     offices,
     elapsed,
+    isRestoringSession,
     isSyncing,
     isMutating,
     hasLoaded,
@@ -822,7 +883,8 @@ export function useLiveQueue(
         allowAuthRetry: false,
       });
       session.tokens = tokens;
-      session.expires = Date.now() + Number(tokens.expiresIn) * 1000;
+      session.expires = getJwtExpiryMs(tokens.idToken, tokens.expiresIn);
+      persistSession(session);
     },
 
     issue: (input: IssueTicketInput) =>
@@ -1088,7 +1150,7 @@ export function useLiveQueue(
       return apiDownloadFile(
         `staff?${query}`,
         token,
-        `CampusQueue Shift Report (${counterRef.current || 'Counter'} â€¢ ${today})`
+        `CampusQueue Shift Report (${counterRef.current || 'Counter'} • ${today})`
       );
     },
 
