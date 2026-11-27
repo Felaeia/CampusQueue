@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
-import { API_BASE_URL, API_POLLING_INTERVAL_MS } from '../config/api';
+import { API_BASE_URL, API_MAX_BACKOFF_MS, API_POLLING_INTERVAL_MS } from '../config/api';
 import {
   ApiResponseError,
   apiDownloadFile,
@@ -284,6 +284,7 @@ export function useLiveQueue(
           const promise = apiFetchJson<Tokens>('session', {
             method: 'POST',
             data: { refreshToken: session.tokens.refreshToken },
+            silent,
           })
             .then((tokens) => {
               session.tokens = tokens;
@@ -331,7 +332,8 @@ export function useLiveQueue(
         return await apiFetchJson<T>(path, {
           method,
           data: options.data,
-          token
+          token,
+          silent: options.silent,
         });
       } catch (error) {
         if (error instanceof ApiResponseError && error.status === 401 && allowRetry) {
@@ -339,7 +341,8 @@ export function useLiveQueue(
           return apiFetchJson<T>(path, {
             method,
             data: options.data,
-            token: refreshedToken
+            token: refreshedToken,
+            silent: options.silent,
           });
         }
         throw error;
@@ -585,18 +588,49 @@ export function useLiveQueue(
     [hydrateSession, signOut]
   );
 
-  // Foreground resume & REST polling for live multi-user sync
+  // Foreground resume & serialized REST polling with exponential backoff (never overlaps)
   useEffect(() => {
     if (!role || role === 'admin') return;
 
-    const poll = () => {
-      if (appStateRef.current !== 'active') return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
+    let consecutiveFailures = 0;
+
+    const getNextDelay = () => {
+      if (consecutiveFailures <= 0) return API_POLLING_INTERVAL_MS;
+      return Math.min(
+        API_MAX_BACKOFF_MS,
+        API_POLLING_INTERVAL_MS * Math.pow(2, Math.min(consecutiveFailures, 4))
+      );
+    };
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void poll();
+      }, getNextDelay());
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      if (inFlight || appStateRef.current !== 'active') {
+        scheduleNext();
+        return;
+      }
       const session = sessionRef.current;
       if (!session) return;
-      void read(session, counterRef.current, {
-        includeLogs: false,
-        silent: true,
-      }).catch((error) => {
+
+      inFlight = true;
+      try {
+        await read(session, counterRef.current, {
+          includeLogs: false,
+          silent: true,
+        });
+        consecutiveFailures = 0;
+      } catch (error) {
+        consecutiveFailures += 1;
         if (
           error instanceof ApiResponseError &&
           [401, 403].includes(error.status) &&
@@ -604,21 +638,27 @@ export function useLiveQueue(
         ) {
           signOut();
           showError('Your session expired. Please sign in again.');
+          return;
         }
-      });
+      } finally {
+        inFlight = false;
+        scheduleNext();
+      }
     };
 
-    const interval = setInterval(poll, API_POLLING_INTERVAL_MS);
+    scheduleNext();
     const subscription = AppState.addEventListener('change', (nextState) => {
       const prev = appStateRef.current;
       appStateRef.current = nextState;
       if (prev !== 'active' && nextState === 'active') {
-        poll();
+        consecutiveFailures = 0;
+        void poll();
       }
     });
 
     return () => {
-      clearInterval(interval);
+      cancelled = true;
+      if (timer) clearTimeout(timer);
       subscription.remove();
     };
   }, [read, role, showError, signOut]);

@@ -218,18 +218,18 @@ function mapActivityLogsToAuditRecords(
       documentId: `activityLogs/${log.id}`,
       ticketCode: log.ticketId || log.targetId || log.id.slice(0, 8),
       dateKey,
-      dateTimeLabel: `${dateKey} â€¢ ${timeLabel}`,
+      dateTimeLabel: `${dateKey} • ${timeLabel}`,
       officeId: log.officeId || 'campus',
       officeName:
         (log.officeId && officeNameById.get(log.officeId)) || log.officeId || 'Campus-Wide',
       serviceName: (log.action || 'System Event').replace(/_/g, ' '),
-      studentName: String(log.details?.studentName ?? log.targetId ?? 'â€”'),
-      studentUsn: String(log.details?.usn ?? log.targetId ?? 'â€”'),
+      studentName: String(log.details?.studentName ?? log.targetId ?? '—'),
+      studentUsn: String(log.details?.usn ?? log.targetId ?? '—'),
       outcome,
       issuedAt: timeLabel,
-      approachingAlertAt: 'â€”',
-      calledAt: 'â€”',
-      qrVerifiedAt: 'â€”',
+      approachingAlertAt: '—',
+      calledAt: '—',
+      qrVerifiedAt: '—',
       closedAt: timeLabel,
       waitDurationSeconds: 0,
       serviceDurationSeconds: 0,
@@ -238,7 +238,7 @@ function mapActivityLogsToAuditRecords(
       verificationMethod: actionText.includes('verified') ? 'QR Scan' : 'Manual',
       handledByStaffId: actorIdentifier,
       handledByStaffName: actorName,
-      counterWindow: String(log.details?.counter ?? log.outcome ?? 'â€”'),
+      counterWindow: String(log.details?.counter ?? log.outcome ?? '—'),
     };
   });
 }
@@ -489,7 +489,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
             id: doc.id,
             identifier: doc.loginId || doc.staffId || doc.usn || doc.id,
             fullName: doc.fullName || doc.staffName || 'Unnamed Account',
-            email: doc.email || 'â€”',
+            email: doc.email || '—',
             role: fallbackRole,
             status: isSuspended ? 'suspended' : 'active',
             assignedOfficeId: doc.officeId,
@@ -580,24 +580,45 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLiveAdmin) return;
-    void refreshAdminData('Today (Live)', false);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
 
-    const interval = setInterval(() => {
-      if (appStateRef.current === 'active') {
-        void refreshAdminData(activeRangeRef.current, true);
+    const scheduleNext = () => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void runPoll();
+      }, ADMIN_POLLING_INTERVAL_MS);
+    };
+
+    const runPoll = async (initial = false) => {
+      if (cancelled || inFlight || (!initial && appStateRef.current !== 'active')) {
+        scheduleNext();
+        return;
       }
-    }, ADMIN_POLLING_INTERVAL_MS);
+      inFlight = true;
+      try {
+        await refreshAdminData(activeRangeRef.current, !initial);
+      } finally {
+        inFlight = false;
+        scheduleNext();
+      }
+    };
+
+    void runPoll(true);
 
     const sub = AppState.addEventListener('change', (nextState) => {
       const prev = appStateRef.current;
       appStateRef.current = nextState;
       if (prev !== 'active' && nextState === 'active') {
-        void refreshAdminData(activeRangeRef.current, true);
+        void runPoll(false);
       }
     });
 
     return () => {
-      clearInterval(interval);
+      cancelled = true;
+      if (timer) clearTimeout(timer);
       sub.remove();
     };
   }, [isLiveAdmin, refreshAdminData]);
@@ -706,7 +727,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       if (!/^[A-Z]{1,4}$/.test(cleanPrefix)) {
         return {
           ok: false,
-          error: 'Ticket prefix must be 1â€“4 uppercase letters.',
+          error: 'Ticket prefix must be 1–4 uppercase letters.',
         };
       }
       const duplicate = offices.find(

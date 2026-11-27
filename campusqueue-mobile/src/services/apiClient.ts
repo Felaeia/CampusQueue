@@ -1,29 +1,43 @@
-import { REQUEST_TIMEOUT_MS, apiUrl } from '../config/api';
+import { API_BASE_URL, REQUEST_TIMEOUT_MS, apiUrl } from '../config/api';
 
 export class ApiResponseError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly endpoint: string,
-    readonly responseBody?: string
+    readonly responseBody?: string,
+    readonly isTimeout = false
   ) {
     super(message);
     this.name = 'ApiResponseError';
   }
 }
 
+export function isAbortOrTimeoutError(error: unknown): boolean {
+  if (error instanceof ApiResponseError) return error.isTimeout;
+  if (!(error instanceof Error)) return false;
+  return (
+    error.name === 'AbortError' ||
+    /aborted|timed out|timeout/i.test(error.message)
+  );
+}
+
 export function getFriendlyApiError(error: unknown): string {
   if (error instanceof ApiResponseError) return error.message;
   if (error instanceof Error) {
-    if (error.name === 'AbortError') {
-      return 'Request timed out. Please check your connection and try again.';
+    if (isAbortOrTimeoutError(error)) {
+      return `Request timed out while contacting ${API_BASE_URL}. Please check your connection and try again.`;
     }
     if (/network request failed|failed to fetch|load failed/i.test(error.message)) {
-      return 'Could not reach the CampusQueue server. Check your internet connection or API URL.';
+      return `Could not reach ${API_BASE_URL}. Check that the server is running and reachable.`;
     }
     return error.message;
   }
   return 'CampusQueue request failed.';
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function apiFetchJson<T>(
@@ -33,84 +47,120 @@ export async function apiFetchJson<T>(
     data?: object;
     token?: string;
     timeoutMs?: number;
+    /** When true (e.g. background polling), transient network/timeout logs use console.warn instead of console.error so Expo LogBox doesn't flood the UI. */
+    silent?: boolean;
+    /** Automatic retry count on transient network/timeout errors (defaults to 1 for non-silent GET, 0 otherwise). */
+    retries?: number;
   } = {}
 ): Promise<T> {
   const url = apiUrl(path);
   const method = options.method ?? (options.data ? 'POST' : 'GET');
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  const maxRetries = options.retries ?? (method === 'GET' && !options.silent ? 1 : 0);
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 
-  try {
-    const response = await fetch(url, {
-      method,
-      headers: {
-        Accept: 'application/json',
-        ...(options.data ? { 'Content-Type': 'application/json' } : {}),
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      },
-      body: options.data ? JSON.stringify(options.data) : undefined,
-      signal: controller.signal,
-    });
-
-    const rawText = await response.text();
-    let parsed: unknown = null;
-    if (rawText) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    let didTimeout = false;
+    const timeout = setTimeout(() => {
+      didTimeout = true;
       try {
-        parsed = JSON.parse(rawText);
+        controller.abort();
       } catch {
-        parsed = null;
+        // Ignore engine-specific abort errors
       }
-    }
+    }, timeoutMs);
 
-    if (!response.ok) {
-      console.error('[CampusQueue API Error]', {
+    try {
+      const response = await fetch(url, {
         method,
-        endpoint: url,
-        status: response.status,
-        responseBody: rawText.slice(0, 500),
+        headers: {
+          Accept: 'application/json',
+          ...(options.data ? { 'Content-Type': 'application/json' } : {}),
+          ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+        },
+        body: options.data ? JSON.stringify(options.data) : undefined,
+        signal: controller.signal,
       });
 
-      const apiMessage =
-        parsed &&
-        typeof parsed === 'object' &&
-        'error' in parsed &&
-        typeof (parsed as { error?: unknown }).error === 'string'
-          ? (parsed as { error: string }).error
-          : rawText && rawText.length < 180
-            ? rawText.trim()
-            : `CampusQueue request failed (${response.status}).`;
+      const rawText = await response.text();
+      let parsed: unknown = null;
+      if (rawText) {
+        try {
+          parsed = JSON.parse(rawText);
+        } catch {
+          parsed = null;
+        }
+      }
 
-      throw new ApiResponseError(apiMessage, response.status, url, rawText);
-    }
+      if (!response.ok) {
+        console.error('[CampusQueue API Error]', {
+          method,
+          endpoint: url,
+          status: response.status,
+          responseBody: rawText.slice(0, 500),
+        });
 
-    if (parsed === null) {
-      console.error('[CampusQueue API Error]', {
+        const apiMessage =
+          parsed &&
+          typeof parsed === 'object' &&
+          'error' in parsed &&
+          typeof (parsed as { error?: unknown }).error === 'string'
+            ? (parsed as { error: string }).error
+            : rawText && rawText.length < 180
+              ? rawText.trim()
+              : `CampusQueue request failed (${response.status}).`;
+
+        throw new ApiResponseError(apiMessage, response.status, url, rawText);
+      }
+
+      if (parsed === null) {
+        console.error('[CampusQueue API Error]', {
+          method,
+          endpoint: url,
+          status: response.status,
+          responseBody: rawText.slice(0, 500),
+        });
+        throw new ApiResponseError(
+          'Unexpected non-JSON response from CampusQueue server.',
+          response.status,
+          url,
+          rawText
+        );
+      }
+
+      return parsed as T;
+    } catch (error) {
+      if (error instanceof ApiResponseError) throw error;
+
+      const timedOut = didTimeout || isAbortOrTimeoutError(error);
+      if (attempt < maxRetries) {
+        await delay(600 * (attempt + 1));
+        continue;
+      }
+
+      const message = timedOut
+        ? `Request timed out while contacting ${API_BASE_URL}. Please check your connection and try again.`
+        : getFriendlyApiError(error);
+      const logPayload = {
         method,
         endpoint: url,
-        status: response.status,
-        responseBody: rawText.slice(0, 500),
-      });
-      throw new ApiResponseError(
-        'Unexpected non-JSON response from CampusQueue server.',
-        response.status,
-        url,
-        rawText
-      );
-    }
+        timedOut,
+        error: error instanceof Error ? error.message : String(error),
+      };
 
-    return parsed as T;
-  } catch (error) {
-    if (error instanceof ApiResponseError) throw error;
-    const message = getFriendlyApiError(error);
-    console.error('[CampusQueue API Network Error]', {
-      method,
-      endpoint: url,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw new ApiResponseError(message, 0, url);
-  } finally {
-    clearTimeout(timeout);
+      if (options.silent) {
+        console.warn('[CampusQueue API Background Sync Warning]', logPayload);
+      } else {
+        console.error('[CampusQueue API Network Error]', logPayload);
+      }
+
+      throw new ApiResponseError(message, 0, url, undefined, timedOut);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  throw new ApiResponseError('CampusQueue request failed.', 0, url);
 }
 
 export async function apiDownloadFile(
@@ -120,7 +170,15 @@ export async function apiDownloadFile(
 ): Promise<string> {
   const url = apiUrl(path);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let didTimeout = false;
+  const timeout = setTimeout(() => {
+    didTimeout = true;
+    try {
+      controller.abort();
+    } catch {
+      // Ignore engine-specific abort errors
+    }
+  }, REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -155,13 +213,17 @@ export async function apiDownloadFile(
     return response.text();
   } catch (error) {
     if (error instanceof ApiResponseError) throw error;
-    const message = getFriendlyApiError(error);
+    const timedOut = didTimeout || isAbortOrTimeoutError(error);
+    const message = timedOut
+      ? `Download timed out while contacting ${API_BASE_URL}. Please try again.`
+      : getFriendlyApiError(error);
     console.error('[CampusQueue API Download Network Error]', {
       method: 'GET',
       endpoint: url,
+      timedOut,
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new ApiResponseError(message, 0, url);
+    throw new ApiResponseError(message, 0, url, undefined, timedOut);
   } finally {
     clearTimeout(timeout);
   }
