@@ -1,7 +1,15 @@
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line } from 'react-native-svg';
 
@@ -13,6 +21,7 @@ import { LeaveQueueModal } from '../../components/ticket/LeaveQueueModal';
 import { LiveQueueTrack } from '../../components/ticket/LiveQueueTrack';
 import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, getOfficeAccent, Radii, Shadows } from '../../theme/tokens';
+import { formatDisplayTimestamp, isTicketCalledOrServing } from '../../utils/waitTime';
 
 export default function ActiveTicketScreen() {
   const router = useRouter();
@@ -24,14 +33,22 @@ export default function ActiveTicketScreen() {
     barcodePattern,
     setSelectedTicketId,
     cancelTicket,
-    advanceQueue,
-    liveEnabled,
-    resetSimulation,
+    acknowledgeTicket,
+    isSyncingLive,
+    refreshLiveQueue,
+    showToast,
     triggerHaptic,
   } = useQueue();
 
   const [showFullQRModal, setShowFullQRModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [isAcknowledging, setIsAcknowledging] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshLiveQueue(true, true);
+    }, [refreshLiveQueue])
+  );
 
   const ticket = currentHeroTicket;
 
@@ -41,6 +58,15 @@ export default function ActiveTicketScreen() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isSyncingLive}
+              onRefresh={() => {
+                void refreshLiveQueue();
+              }}
+              tintColor={Colors.ink}
+            />
+          }
         >
           <View style={styles.headerRow}>
             <Pressable
@@ -78,11 +104,11 @@ export default function ActiveTicketScreen() {
     );
   }
 
-  const isServing = ticket.aheadCount === 0 || ticket.status === 'serving';
+  const isServing = isTicketCalledOrServing(ticket);
   const officePillColor = getOfficeAccent(ticket.officeId);
 
   const ordinalText =
-    ticket.aheadCount === 1
+    ticket.aheadCount <= 1
       ? 'next'
       : ticket.aheadCount === 2
         ? '2nd'
@@ -90,11 +116,34 @@ export default function ActiveTicketScreen() {
           ? '3rd'
           : `${ticket.aheadCount}th`;
 
+  const handleAcknowledge = async () => {
+    if (isAcknowledging) return;
+    setIsAcknowledging(true);
+    try {
+      const ok = await acknowledgeTicket(ticket.id);
+      if (ok) {
+        triggerHaptic('success');
+        showToast('Counter notified: You are on your way!', 'matcha');
+      }
+    } finally {
+      setIsAcknowledging(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncingLive}
+            onRefresh={() => {
+              void refreshLiveQueue();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Top Header */}
         <View style={styles.headerRow}>
@@ -155,7 +204,9 @@ export default function ActiveTicketScreen() {
           <Text style={styles.alertText}>
             {isServing
               ? `It's Your Turn! Please proceed to ${ticket.counter} now.`
-              : `Heads up! You are ${ordinalText} in line. Please head to the ${ticket.shortOffice} lobby now.`}
+              : ticket.aheadCount === 0
+                ? `You're up next! Please stand by near the ${ticket.shortOffice} lobby.`
+                : `Heads up! You are ${ordinalText} in line. Please head to the ${ticket.shortOffice} lobby now.`}
           </Text>
         </View>
 
@@ -178,7 +229,7 @@ export default function ActiveTicketScreen() {
               <View style={styles.rightAlign}>
                 <Text style={styles.darkLabel}>EST. WAIT TIME</Text>
                 <Text style={styles.waitValue}>
-                  {isServing ? 'NOW' : `~${ticket.estWaitMins}mins`}
+                  {isServing ? 'NOW' : `~${Math.max(0, ticket.estWaitMins)} mins`}
                 </Text>
               </View>
             </View>
@@ -239,7 +290,9 @@ export default function ActiveTicketScreen() {
 
                 <View>
                   <Text style={styles.lightLabel}>ISSUED AT</Text>
-                  <Text style={styles.lightMonoValue}>{ticket.issuedAt}</Text>
+                  <Text style={styles.lightMonoValue}>
+                    {formatDisplayTimestamp(ticket.issuedAt, 'short')}
+                  </Text>
                 </View>
 
                 <View style={styles.shieldNoteRow}>
@@ -258,42 +311,45 @@ export default function ActiveTicketScreen() {
           </View>
         </View>
 
-        {/* Cancel Ticket Button */}
-        <Pressable
-          onPress={() => {
-            triggerHaptic('warning');
-            setShowCancelModal(true);
-          }}
-          style={({ pressed }) => [styles.cancelButton, pressed && styles.cancelButtonPressed]}
-        >
-          <Text style={styles.cancelButtonText}>Leave Queue / Cancel Ticket</Text>
-        </Pressable>
-
-        {/* Compact Live Queue Simulator Controls */}
-        {!liveEnabled && <View style={styles.simulatorBar}>
+        {/* Called Turn Acknowledgment or Cancel Waiting Ticket */}
+        {isServing ? (
+          ticket.acknowledgedAt ? (
+            <View style={styles.acknowledgedPill}>
+              <Ionicons name="checkmark-circle" size={16} color={Colors.successText} />
+              <Text style={styles.acknowledgedText}>
+                Counter Notified • On My Way
+              </Text>
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => {
+                void handleAcknowledge();
+              }}
+              disabled={isAcknowledging}
+              style={({ pressed }) => [
+                styles.acknowledgeButton,
+                (pressed || isAcknowledging) && styles.pressed,
+              ]}
+            >
+              {isAcknowledging ? (
+                <ActivityIndicator size="small" color={Colors.matcha} />
+              ) : (
+                <Text style={styles.acknowledgeButtonText}>I&apos;m On My Way</Text>
+              )}
+            </Pressable>
+          )
+        ) : (
           <Pressable
             onPress={() => {
-              const result = advanceQueue();
-              if (result === 'completed') {
-                router.replace('/student/history');
-              }
+              triggerHaptic('warning');
+              setShowCancelModal(true);
             }}
-            style={({ pressed }) => [styles.simAdvanceBtn, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.cancelButton, pressed && styles.cancelButtonPressed]}
           >
-            <View style={styles.simDot} />
-            <Text style={styles.simAdvanceText}>
-              {isServing ? 'Complete Service Step' : 'Simulate Queue Step'}
-            </Text>
+            <Text style={styles.cancelButtonText}>Leave Queue / Cancel Ticket</Text>
           </Pressable>
+        )}
 
-          <Pressable
-            onPress={resetSimulation}
-            accessibilityLabel="Reset queue simulation"
-            style={({ pressed }) => [styles.simResetBtn, pressed && styles.pressed]}
-          >
-            <Feather name="rotate-ccw" size={14} color={Colors.ink} />
-          </Pressable>
-        </View>}
       </ScrollView>
 
       <FullScreenQRModal
@@ -611,6 +667,37 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyBold,
     fontSize: 12.5,
     color: Colors.danger,
+  },
+  acknowledgeButton: {
+    width: '100%',
+    paddingVertical: 13,
+    borderRadius: Radii.xl,
+    backgroundColor: Colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  acknowledgeButtonText: {
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 13,
+    color: Colors.matcha,
+  },
+  acknowledgedPill: {
+    width: '100%',
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderRadius: Radii.xl,
+    backgroundColor: Colors.matchaSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  acknowledgedText: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+    color: Colors.successText,
   },
   simulatorBar: {
     flexDirection: 'row',
