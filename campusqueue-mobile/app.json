@@ -12,13 +12,19 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.felaeia.campusqueue",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#F5F3EE",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -43,6 +49,17 @@
       ],
       "expo-secure-store",
       "expo-sharing"
-    ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "6501ede8-ffa6-42e5-9dc7-742a9b2243c5"
+      }
+    },
+    "owner": "felaeia"
   }
 }
