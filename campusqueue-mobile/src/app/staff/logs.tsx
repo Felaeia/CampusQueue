@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -11,7 +11,6 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -48,12 +47,6 @@ export default function StaffDailyLog() {
   const [exportFormat, setExportFormat] = useState<'CSV' | 'PDF'>('CSV');
   const [isExporting, setIsExporting] = useState(false);
 
-  // Fetch full live shift logs whenever the Logs tab gains focus
-  useFocusEffect(
-    useCallback(() => {
-      void refreshDesk(true, true);
-    }, [refreshDesk])
-  );
 
   const officeDisplayName = activeStaff.officeShort || activeStaff.office || 'Campus Office';
   const officeBadgeLabel = officeDisplayName.replace(/\s*Office$/i, '').toUpperCase();
@@ -79,10 +72,7 @@ export default function StaffDailyLog() {
     try {
       const liveExport = await downloadShiftReport(exportFormat.toLowerCase() as 'csv' | 'pdf');
       setShowExportModal(false);
-      await Share.share({
-        title: `CampusQueue_Shift_Summary.${exportFormat.toLowerCase()}`,
-        message: liveExport,
-      });
+      await shareReport(liveExport);
       triggerHaptic('success');
       showToast(`Shift summary exported as ${exportFormat}.`, 'matcha');
     } catch (error) {
@@ -97,7 +87,7 @@ export default function StaffDailyLog() {
   };
 
   const handleRequeue = async (tx: ProcessedTransaction) => {
-    const ticketId = tx.id.replace(/-no-show-\d+$/, '');
+    const ticketId = tx.ticketId ?? tx.id.replace(/-no-show-\d+$/, '');
     const ok = await requeueTicket(ticketId);
     if (ok) {
       setSelectedTx(null);

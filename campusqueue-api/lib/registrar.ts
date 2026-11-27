@@ -52,101 +52,22 @@ export function staffTicket(id: string, ticket: FirebaseFirestore.DocumentData) 
   };
 }
 
-async function autoPromoteToDesk(
-  actor: Actor,
-  officeId: string,
-  name: string,
-  office: FirebaseFirestore.DocumentReference,
-  desk: FirebaseFirestore.DocumentReference,
-): Promise<ReturnType<typeof staffTicket> | null> {
-  return adminDb().runTransaction(async (tx) => {
-    const [deskSnap, officeSnap, nextSnap] = await Promise.all([
-      tx.get(desk),
-      tx.get(office),
-      tx.get(waiting(officeId).orderBy("sequence").limit(1)),
-    ]);
-    const deskData = deskSnap.data();
-    const config = officeSnap.data();
-    const nextEntry = nextSnap.docs[0];
-    if (!deskData || deskData.archivedAt || deskData.status !== "online" || deskData.ticketId || !config || config.archivedAt || !nextEntry) {
-      return null;
-    }
-    const nextDoc = await tx.get(ticketRef(nextEntry.id));
-    const ticket = nextDoc.data();
-    if (!ticket || ticket.status !== "waiting" || ticket.officeId !== officeId) {
-      if (!ticket || ticket.status !== "waiting") tx.delete(nextEntry.ref);
-      return null;
-    }
-    const notify = await prepareNearTurn(tx, officeId, config, nextDoc.id);
-    const timestamp = now();
-    const serverNow = FieldValue.serverTimestamp();
-    const servingByCounter = {
-      ...(config.servingByCounter ?? {}),
-      [name]: { ticketNumber: ticket.ticketNumber, calledAt: timestamp },
-    };
-    const serving = Object.values(servingByCounter) as { ticketNumber: string; calledAt: string }[];
-    serving.sort((a, b) => b.calledAt.localeCompare(a.calledAt));
-
-    tx.delete(nextEntry.ref);
-    tx.update(nextDoc.ref, {
-      status: "serving",
-      calledAt: timestamp,
-      startedAt: timestamp,
-      counter: name,
-      calledTimestamp: serverNow,
-      startedTimestamp: serverNow,
-    });
-    const alert = notification(ticket.uid, "It is your turn", `Please proceed to ${name}.`, nextDoc.id);
-    tx.create(alert.ref, alert.data);
-    audit(tx, actor, "ticket_called", "ticket", nextDoc.id, { officeId, ticketId: nextDoc.id });
-    audit(tx, actor, "service_started", "ticket", nextDoc.id, { officeId, ticketId: nextDoc.id });
-    tx.update(office, {
-      servingByCounter,
-      nowServing: serving[0]?.ticketNumber ?? ticket.ticketNumber,
-      waitingCount: Math.max(0, (config.waitingCount ?? 1) - 1),
-    });
-    tx.update(desk, { ticketId: nextDoc.id, assignedStaffUid: actor.uid, updatedAt: serverNow });
-    notify();
-
-    return staffTicket(nextDoc.id, {
-      ...ticket,
-      status: "serving",
-      calledAt: timestamp,
-      startedAt: timestamp,
-      counter: name,
-    });
-  });
-}
-
 export async function staffState(actor: Actor, input: Record<string, unknown>, legacy: boolean) {
   const { name, officeId, office, desk: deskRef, shiftLogs } = staffScope(actor, input, legacy);
   const local = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   const startOfShift = new Date(local + "T00:00:00+08:00").toISOString();
-  let [desk, queue, logs, officeSnap] = await Promise.all([
+  const [desk, queue, logs, officeSnap] = await Promise.all([
     deskRef.get(), waiting(officeId).orderBy("sequence").limit(100).get(),
     input.includeLogs === "false" ? null : shiftLogs.where("closedAt", ">=", startOfShift).orderBy("closedAt", "desc").limit(250).get(), office.get(),
   ]);
-  let data = desk.data();
+  const data = desk.data();
   if (!data || data.archivedAt || !officeSnap.exists || officeSnap.data()?.archivedAt) throw new ApiError(404, "Counter is unavailable");
 
-  // Auto-promote the earliest waiting ticket to SERVING if this online counter is idle
-  let autoPromoted: ReturnType<typeof staffTicket> | null = null;
-  if (data.status === "online" && !data.ticketId && !queue.empty) {
-    autoPromoted = await autoPromoteToDesk(actor, officeId, name, office, deskRef);
-    if (autoPromoted) {
-      [desk, queue] = await Promise.all([
-        deskRef.get(),
-        waiting(officeId).orderBy("sequence").limit(100).get(),
-      ]);
-      data = desk.data()!;
-    }
-  }
-
-  const serving = autoPromoted ? null : data.ticketId ? await ticketRef(data.ticketId).get() : null;
+  const serving = data.ticketId ? await ticketRef(data.ticketId).get() : null;
   const waitingTickets = queue.empty ? [] : await adminDb().getAll(...queue.docs.map((doc) => ticketRef(doc.id)));
   return {
     officeId, counter: name, deskStatus: data.status,
-    servingTicket: autoPromoted ?? (serving?.exists ? staffTicket(serving.id, serving.data()!) : null),
+    servingTicket: serving?.exists ? staffTicket(serving.id, serving.data()!) : null,
     waitingQueue: waitingTickets.filter((doc) => doc.data()?.status === "waiting").map((doc) => staffTicket(doc.id, doc.data()!)),
     transactions: (logs?.docs ?? []).map((doc) => {
       const { staffUid, ...transaction } = doc.data();
@@ -279,7 +200,19 @@ export async function changeDesk(actor: Actor, input: Record<string, unknown>, l
       return { ticketId: current.id, status: "serving", startedAt };
     }
 
-    const noShow = action === "no-show" || action === "skip";
+    if (action === "complete" && !legacy && currentData?.status !== "serving") {
+      throw new ApiError(409, "Start service before completing this ticket");
+    }
+    const noShow = action === "no-show" || (action === "skip" && (!legacy || config.graceMinutes != null));
+    if (noShow) {
+      if (!Number.isInteger(config.graceMinutes) || config.graceMinutes < 1) {
+        throw new ApiError(409, "No-show grace period must be configured");
+      }
+      const elapsed = Date.now() - Date.parse(currentData?.calledAt ?? "");
+      if (!Number.isFinite(elapsed) || elapsed < config.graceMinutes * 60_000) {
+        throw new ApiError(409, "No-show grace period has not elapsed");
+      }
+    }
     const isCancel = action === "cancel";
 
     if (action === "recall" && current && currentData) {
@@ -445,6 +378,11 @@ export async function verifyTicket(actor: Actor, input: Record<string, unknown>,
         if (data.status !== "online") {
           throw new ApiError(409, "Set your counter to Online before scanning waiting tickets.");
         }
+        const first = (await tx.get(waiting(officeId).orderBy("sequence").limit(1))).docs[0];
+        if (first?.id !== targetSnap.id) {
+          throw new ApiError(409, "This ticket is still waiting behind another student.");
+        }
+        const notify = await prepareNearTurn(tx, officeId, config, targetSnap.id);
         const timestamp = now();
         const serverNow = FieldValue.serverTimestamp();
         const servingByCounter = {
@@ -474,6 +412,7 @@ export async function verifyTicket(actor: Actor, input: Record<string, unknown>,
         audit(tx, actor, "ticket_called", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
         audit(tx, actor, "service_started", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
         audit(tx, actor, "ticket_verified", "ticket", targetSnap.id, { officeId, ticketId: targetSnap.id });
+        notify();
         return {
           ...staffTicket(targetSnap.id, { ...scanned, status: "serving", calledAt: timestamp, startedAt: timestamp, counter: name }),
           isQrVerified: true,

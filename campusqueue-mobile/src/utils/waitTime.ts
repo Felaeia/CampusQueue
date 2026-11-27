@@ -49,20 +49,11 @@ export function calculateEstimatedWaitMinutes(params: {
   backendEstimate?: number | null;
 }): number {
   const safeAhead = Math.max(0, Math.floor(params.peopleAhead || 0));
-  if (safeAhead === 0) return 0;
-
+  if (typeof params.backendEstimate === 'number' && Number.isFinite(params.backendEstimate) && params.backendEstimate >= 0) {
+    return Math.round(params.backendEstimate);
+  }
   const fixedRate = getOfficeMinutesPerStudent(params.officeId, params.officeName);
-  if (fixedRate !== null) {
-    return Math.max(0, safeAhead * fixedRate);
-  }
-
-  if (
-    typeof params.backendEstimate === 'number' &&
-    Number.isFinite(params.backendEstimate) &&
-    params.backendEstimate >= 0
-  ) {
-    return Math.max(0, Math.round(params.backendEstimate));
-  }
+  if (fixedRate !== null) return safeAhead * fixedRate;
 
   const rate =
     params.fallbackMinutesPerStudent && params.fallbackMinutesPerStudent > 0
@@ -146,7 +137,7 @@ export function normalizeActiveTicket(
     };
   }
 
-  const effectiveAhead = rawAhead + (hasActiveNowServing(nowServing) ? 1 : 0);
+  const effectiveAhead = rawAhead;
   const matchedService = office?.services.find(
     (s) => (ticket.serviceId && s.id === ticket.serviceId) || s.name === ticket.service
   );
@@ -158,12 +149,7 @@ export function normalizeActiveTicket(
     backendEstimate: ticket.estWaitMins,
   });
 
-  const trackNodes =
-    Array.isArray(ticket.trackNodes) && ticket.trackNodes.length > 0
-      ? ticket.trackNodes
-      : effectiveAhead > 1
-        ? Array.from({ length: Math.min(2, effectiveAhead - 1) }, (_, idx) => `#${idx + 1}`)
-        : [];
+  const trackNodes = Array.isArray(ticket.trackNodes) ? ticket.trackNodes : [];
 
   return {
     ...ticket,

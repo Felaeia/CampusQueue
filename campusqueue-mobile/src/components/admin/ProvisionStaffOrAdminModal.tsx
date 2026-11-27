@@ -20,9 +20,19 @@ interface ProvisionStaffOrAdminModalProps {
   offices: AdminOfficeRecord[];
   existingUsers: AdminUserRecord[];
   onClose: () => void;
-  onProvision: (
-    input: ProvisionUserInput & { password?: string }
-  ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
+  onProvision: (input: ProvisionUserInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
+}
+
+function suggestNextId(role: 'staff' | 'admin', existingUsers: AdminUserRecord[]): string {
+  const prefix = role === 'staff' ? 'EMP-' : 'ADM-';
+  const digits = role === 'staff' ? 4 : 3;
+  const base = role === 'staff' ? 1043 : 4;
+  let candidate = base;
+  const used = new Set(existingUsers.map((u) => u.identifier.toUpperCase()));
+  while (used.has(`${prefix}${String(candidate).padStart(digits, '0')}`)) {
+    candidate += 1;
+  }
+  return `${prefix}${String(candidate).padStart(digits, '0')}`;
 }
 
 export function ProvisionStaffOrAdminModal(props: ProvisionStaffOrAdminModalProps) {
@@ -32,6 +42,7 @@ export function ProvisionStaffOrAdminModal(props: ProvisionStaffOrAdminModalProp
 function ProvisionStaffOrAdminModalForm({
   visible,
   offices,
+  existingUsers,
   onClose,
   onProvision,
 }: ProvisionStaffOrAdminModalProps) {
@@ -40,38 +51,41 @@ function ProvisionStaffOrAdminModalForm({
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
   const [assignedOfficeId, setAssignedOfficeId] = useState(offices[0]?.id ?? '');
   const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    if (visible) {
-      setRole('staff');
-      setIdentifier('');
-      setFullName('');
-      setEmail('');
-      setPassword('');
-      setAssignedOfficeId(offices[0]?.id ?? '');
-      setErrorMsg('');
-    }
-  }, [offices, visible]);
 
   const handleRoleChange = (nextRole: 'staff' | 'admin') => {
     setRole(nextRole);
+    setIdentifier(suggestNextId(nextRole, existingUsers));
     setErrorMsg('');
   };
 
   const handleSubmit = async () => {
-    const res = await onProvision({
-      role,
-      identifier,
-      fullName,
-      email,
-      password,
-      assignedOfficeId: role === 'staff' ? assignedOfficeId : undefined,
-    });
-    if (!res.ok) {
-      setErrorMsg(res.error ?? 'Failed to provision account.');
-      return;
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    try {
+      const res = await onProvision({
+        role,
+        password,
+        identifier,
+        fullName,
+        email,
+        assignedOfficeId: role === 'staff' ? assignedOfficeId : undefined,
+      });
+      if (!res.ok) {
+        setErrorMsg(res.error ?? 'Failed to provision account.');
+        return;
+      }
+      onClose();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to provision account.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
   };
 
@@ -131,7 +145,7 @@ function ProvisionStaffOrAdminModalForm({
                     setIdentifier(t.toUpperCase());
                     if (errorMsg) setErrorMsg('');
                   }}
-                  placeholder={role === 'staff' ? 'Enter employee ID' : 'Enter admin ID'}
+                  placeholder={role === 'staff' ? 'EMP-1043' : 'ADM-004'}
                   placeholderTextColor={Colors.inkMuted}
                   autoCapitalize="characters"
                   style={[styles.input, styles.monoInput]}
@@ -198,21 +212,11 @@ function ProvisionStaffOrAdminModalForm({
                 </View>
               ) : null}
 
-              {/* Initial Password */}
+              {/* Initial Password Notice */}
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Initial Password (min 8 characters) *</Text>
-                <TextInput
-                  value={password}
-                  onChangeText={(t) => {
-                    setPassword(t);
-                    if (errorMsg) setErrorMsg('');
-                  }}
-                  placeholder="Enter initial password"
-                  placeholderTextColor={Colors.inkMuted}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  style={styles.input}
-                />
+                <Text style={styles.label}>Initial password *</Text>
+                <TextInput style={styles.input} secureTextEntry value={password} onChangeText={setPassword}
+                  maxLength={128} autoCapitalize="none" autoCorrect={false} />
               </View>
 
               {errorMsg ? (

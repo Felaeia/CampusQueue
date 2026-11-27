@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -60,11 +60,6 @@ export default function StaffQueueDesk() {
   const [staffRemarks, setStaffRemarks] = useState('');
   const [skipReason, setSkipReason] = useState('Student did not appear after recall');
 
-  useFocusEffect(
-    useCallback(() => {
-      void refreshDesk(false, true);
-    }, [refreshDesk])
-  );
 
   const formatTimer = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');

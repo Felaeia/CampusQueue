@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DieCutNotch } from '../../components/DieCutNotch';
@@ -48,11 +48,6 @@ export default function StudentHomeScreen() {
   const [conflictTicket, setConflictTicket] = useState<ActiveTicket | null>(null);
   const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      void refreshLiveQueue(true, true);
-    }, [refreshLiveQueue])
-  );
 
   const primaryActive = activeTickets[0] ?? null;
   const primaryIsServing = isTicketCalledOrServing(primaryActive);

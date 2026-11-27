@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -31,22 +31,19 @@ function makeRequestId(): string {
   return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicketSheetProps) {
-  const [selectedServiceId, setSelectedServiceId] = useState('');
-  const [selectedServiceName, setSelectedServiceName] = useState('');
+export function RequestTicketSheet(props: RequestTicketSheetProps) {
+  return props.office ? <TicketRequestForm key={props.office.id} {...props} /> : null;
+}
+
+function TicketRequestForm({ office, onClose, onConfirm }: RequestTicketSheetProps) {
+  const [selectedServiceId, setSelectedServiceId] = useState(office?.services[0]?.id ?? '');
+  const [selectedServiceName, setSelectedServiceName] = useState(office?.services[0]?.name ?? '');
   const [ticketNotes, setTicketNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const requestIdRef = useRef(makeRequestId());
+  const submitting = useRef(false);
 
-  useEffect(() => {
-    if (office) {
-      setSelectedServiceId(office.services[0]?.id ?? '');
-      setSelectedServiceName(office.services[0]?.name ?? '');
-      setTicketNotes('');
-      setIsSubmitting(false);
-      requestIdRef.current = makeRequestId();
-    }
-  }, [office]);
+
 
   if (!office) return null;
 
@@ -59,7 +56,8 @@ export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicket
   };
 
   const handleSubmit = async () => {
-    if (isSubmitting || !selectedServiceName) return;
+    if (submitting.current || !selectedServiceName) return;
+    submitting.current = true;
     setIsSubmitting(true);
     try {
       await onConfirm({
@@ -69,6 +67,7 @@ export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicket
         requestId: requestIdRef.current,
       });
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };

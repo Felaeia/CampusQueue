@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line } from 'react-native-svg';
 
@@ -45,11 +45,6 @@ export default function ActiveTicketScreen() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [isAcknowledging, setIsAcknowledging] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      void refreshLiveQueue(true, true);
-    }, [refreshLiveQueue])
-  );
 
   const ticket = currentHeroTicket;
 

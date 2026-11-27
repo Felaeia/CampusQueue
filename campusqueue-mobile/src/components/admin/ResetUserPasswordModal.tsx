@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
@@ -8,10 +8,7 @@ import { AdminUserRecord } from '../../types/admin';
 interface ResetUserPasswordModalProps {
   user: AdminUserRecord | null;
   onClose: () => void;
-  onConfirmReset: (
-    userId: string,
-    newPassword: string
-  ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
+  onConfirmReset: (userId: string, password: string) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
 export function ResetUserPasswordModal(props: ResetUserPasswordModalProps) {
@@ -23,36 +20,26 @@ function ResetUserPasswordModalForm({
   onClose,
   onConfirmReset,
 }: ResetUserPasswordModalProps) {
-  const [newPassword, setNewPassword] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (user) {
-      setNewPassword('');
-      setErrorMsg('');
-      setSaving(false);
-    }
-  }, [user]);
-
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
   if (!user) return null;
 
-  const handleConfirm = async () => {
-    if (saving) return;
-    if (newPassword.trim().length < 8) {
-      setErrorMsg('New password must be at least 8 characters.');
-      return;
-    }
-    setSaving(true);
+  const submit = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
     try {
-      const res = await onConfirmReset(user.id, newPassword.trim());
-      if (!res.ok) {
-        setErrorMsg(res.error ?? 'Failed to reset password.');
-        return;
-      }
-      onClose();
+      const result = await onConfirmReset(user.id, password);
+      if (result.ok) onClose();
+      else setError(result.error ?? 'Could not reset the password.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not reset the password.');
     } finally {
-      setSaving(false);
+      pending.current = false;
+      setBusy(false);
     }
   };
 
@@ -65,46 +52,27 @@ function ResetUserPasswordModalForm({
           </View>
           <Text style={styles.title}>Reset User Password</Text>
           <Text style={styles.body}>
-            Set a new password for <Text style={styles.bold}>{user.fullName}</Text> (
-            <Text style={styles.mono}>{user.identifier}</Text>). Existing sessions will be signed
-            out immediately.
+            Reset password for <Text style={styles.bold}>{user.fullName}</Text> (
+            <Text style={styles.mono}>{user.identifier}</Text>).
           </Text>
           <TextInput accessibilityLabel="New password" placeholder="New password" secureTextEntry
             autoCapitalize="none" autoCorrect={false} maxLength={128} value={password} onChangeText={setPassword}
             style={styles.passwordInput} />
           {!!error && <Text accessibilityRole="alert" style={styles.subNote}>{error}</Text>}
 
-          <TextInput
-            value={newPassword}
-            onChangeText={(t) => {
-              setNewPassword(t);
-              if (errorMsg) setErrorMsg('');
-            }}
-            placeholder="New password (min 8 characters)"
-            placeholderTextColor={Colors.inkMuted}
-            secureTextEntry
-            autoCapitalize="none"
-            style={styles.input}
-          />
-
-          {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
-
           <View style={styles.actionsRow}>
             <Pressable
               onPress={onClose}
-              disabled={saving}
               style={({ pressed }) => [styles.cancelBtn, pressed && styles.pressed]}
             >
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              onPress={() => {
-                void handleConfirm();
-              }}
-              disabled={saving}
-              style={({ pressed }) => [styles.confirmBtn, (pressed || saving) && styles.pressed]}
+              disabled={busy || password.length < 8}
+              onPress={submit}
+              style={({ pressed }) => [styles.confirmBtn, pressed && styles.pressed]}
             >
-              <Text style={styles.confirmText}>{saving ? 'Saving...' : 'Confirm Reset'}</Text>
+              <Text style={styles.confirmText}>Confirm Reset</Text>
             </Pressable>
           </View>
         </Pressable>
@@ -157,24 +125,11 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.monoBold,
     color: Colors.ink,
   },
-  input: {
-    width: '100%',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radii.lg,
-    backgroundColor: Colors.surfaceSubtle,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
+  subNote: {
     fontFamily: Fonts.bodyMedium,
-    fontSize: 13,
-    color: Colors.ink,
-    marginTop: 4,
-  },
-  errorText: {
-    fontFamily: Fonts.bodySemiBold,
-    fontSize: 12,
-    color: Colors.danger,
-    alignSelf: 'flex-start',
+    fontSize: 11.5,
+    color: Colors.inkMuted,
+    textAlign: 'center',
   },
   passwordInput: { width: '100%', borderWidth: 1, borderColor: Colors.border, borderRadius: Radii.lg, padding: 10 },
   actionsRow: {

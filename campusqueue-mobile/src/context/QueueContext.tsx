@@ -36,6 +36,7 @@ import {
   StaffQueueTicket,
   VerifiedTicketData,
 } from '../types/staff';
+import type { ApiDownload } from './apiClient';
 import { useLiveQueue, type LiveRole } from './useLiveQueue';
 
 function formatDuration(totalSeconds: number): string {
@@ -77,6 +78,11 @@ export interface QueueContextValue {
   liveRole: LiveRole | null;
   liveLoginId: string;
   isRestoringSession: boolean;
+  restoring: boolean;
+  restoreSession: () => Promise<void>;
+  restoreError?: string;
+  adminIdentity?: { loginId?: string; fullName?: string };
+  enterScope: ReturnType<typeof useLiveQueue>['enterScope'];
   isSyncingLive: boolean;
   isMutatingLive: boolean;
   hasLoadedLive: boolean;
@@ -85,7 +91,7 @@ export interface QueueContextValue {
   liveSignIn: (
     loginId: string,
     password: string,
-    rememberMe?: boolean
+    rememberMe: boolean
   ) => Promise<{ role: LiveRole; name?: string }>;
   liveChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   liveVerify: (
@@ -97,8 +103,8 @@ export interface QueueContextValue {
     method?: 'GET' | 'POST' | 'PATCH',
     silent?: boolean
   ) => Promise<T>;
-  liveAdminDownload: (query: string) => Promise<string>;
-  downloadStaffShiftReport: (format: 'csv' | 'pdf') => Promise<string>;
+  liveAdminDownload: (query: string) => Promise<ApiDownload>;
+  downloadStaffShiftReport: (format: 'csv' | 'pdf') => Promise<ApiDownload>;
 
   minPasswordLength: number;
   studentProfile: StudentProfile;
@@ -196,6 +202,11 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
 
   const live = useLiveQueue(handleLiveError, setCalledAlertTicket, handleLiveCompleted);
 
+  const { refresh, signOut } = live;
+  const refreshLiveQueue = useCallback(async (_includeLogs?: boolean, _silent?: boolean) => {
+    await refresh();
+  }, [refresh]);
+
   const soundAndHapticsEnabled = live.student?.profile.soundAndHaptics ?? true;
 
   const triggerHaptic = useCallback(
@@ -219,19 +230,15 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
   }, [toast]);
 
   const bumpLoginReset = useCallback(() => {
-    live.signOut();
+    signOut();
     setSelectedTicketId('');
     setLoginResetNonce((prev) => prev + 1);
-  }, [live]);
+  }, [signOut]);
 
   const activeTickets = live.student?.activeTickets ?? [];
-  const currentHeroTicket = useMemo(
-    () =>
-      activeTickets.find((ticket) => ticket.id === selectedTicketId) ??
-      activeTickets[0] ??
-      null,
-    [activeTickets, selectedTicketId]
-  );
+  const currentHeroTicket =
+    activeTickets.find((ticket) => ticket.id === selectedTicketId) ?? activeTickets[0] ?? null;
+
 
   const logs = live.desk?.transactions ?? [];
   const timing = logs.filter(
@@ -259,19 +266,27 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
 
   const value: QueueContextValue = {
     liveRole: live.role,
-    liveLoginId: live.loginId,
-    isRestoringSession: live.isRestoringSession,
+    liveLoginId: live.identity?.account?.loginId ?? live.staff?.staffId ?? '',
+    isRestoringSession: live.restoring,
+    restoring: live.restoring,
+    restoreSession: live.restore,
+    restoreError: live.restoreError,
+    adminIdentity: live.identity?.account,
+    enterScope: live.enterScope,
     isSyncingLive: live.isSyncing,
     isMutatingLive: live.isMutating,
     hasLoadedLive: live.hasLoaded,
-    liveSyncError: live.syncError,
-    refreshLiveQueue: live.refreshNow,
+    liveSyncError: live.syncError ?? null,
+    refreshLiveQueue,
     liveSignIn: live.signIn,
     liveChangePassword: live.changePassword,
     liveVerify: live.verify,
     liveAdminRequest: live.adminRequest,
     liveAdminDownload: live.adminDownload,
-    downloadStaffShiftReport: live.downloadShiftReport,
+    downloadStaffShiftReport: (format) => {
+      const query = new URLSearchParams({ counter: live.counter, format });
+      return live.staffDownload(query.toString());
+    },
 
     minPasswordLength: MIN_PASSWORD_LENGTH,
     studentProfile: live.student?.profile ?? EMPTY_STUDENT_PROFILE,
@@ -332,21 +347,21 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     acknowledgeTicket: live.acknowledge,
 
     togglePushAlerts: () => {
-      void live.preferences('pushAlerts').then(() => {
-        showToast('Push alert preference saved', 'dark');
+      void live.preferences('pushAlerts').then((ok) => {
+        if (ok) showToast('Push alert preference saved', 'dark');
       });
     },
     toggleSoundAndHaptics: () => {
-      void live.preferences('soundAndHaptics').then(() => {
-        showToast('Sound & vibration preference saved', 'dark');
+      void live.preferences('soundAndHaptics').then((ok) => {
+        if (ok) showToast('Sound & vibration preference saved', 'dark');
       });
     },
     markNotificationRead: (id: string) => {
       void live.notification(id);
     },
     markAllNotificationsRead: () => {
-      void live.notification().then(() => {
-        showToast('All notifications marked as read', 'dark');
+      void live.notification().then((ok) => {
+        if (ok) showToast('All notifications marked as read', 'dark');
       });
     },
 
@@ -356,7 +371,10 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         if (res) showToast(`Desk status set to ${status}`, 'dark');
       });
     },
-    staffCallNext: async () => (await live.deskAction('call-next'))?.desk?.servingTicket ?? null,
+    staffCallNext: async () => {
+      const response = await live.deskAction('call-next');
+      return response?.result.ticket ?? response?.desk?.servingTicket ?? null;
+    },
     staffStartService: async () => Boolean(await live.deskAction('start')),
     staffCompleteCurrent: async (advance: boolean, remarks?: string) => {
       const previousNumber = live.desk?.servingTicket?.ticketNumber;
@@ -364,7 +382,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       return response
         ? {
             completedNumber: previousNumber,
-            nextTicket: response.desk?.servingTicket ?? undefined,
+            nextTicket: response.result.ticket ?? response.desk?.servingTicket ?? undefined,
           }
         : {};
     },
@@ -378,7 +396,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       return response
         ? {
             skippedNumber: previousNumber,
-            nextTicket: response.desk?.servingTicket ?? undefined,
+            nextTicket: response.result.ticket ?? response.desk?.servingTicket ?? undefined,
           }
         : {};
     },
@@ -388,7 +406,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       return response
         ? {
             cancelledNumber: previousNumber,
-            nextTicket: response.desk?.servingTicket ?? undefined,
+            nextTicket: response.result.ticket ?? response.desk?.servingTicket ?? undefined,
           }
         : {};
     },

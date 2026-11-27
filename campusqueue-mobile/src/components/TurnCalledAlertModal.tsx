@@ -26,7 +26,7 @@ export function TurnCalledAlertModal() {
     const ticketId = calledAlertTicket.id;
     setAcknowledging(true);
     try {
-      await acknowledgeTicket(ticketId);
+      if (!(await acknowledgeTicket(ticketId))) return;
       setCalledAlertTicket(null);
       setSelectedTicketId(ticketId);
       triggerHaptic('success');

@@ -1,10 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { Colors, Radii, Shadows } from '../../theme/tokens';
 
 function usePulseOpacity() {
-  const opacity = useRef(new Animated.Value(0.45)).current;
+  const [opacity] = useState(() => new Animated.Value(0.45));
 
   useEffect(() => {
     const animation = Animated.loop(

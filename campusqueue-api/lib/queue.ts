@@ -77,7 +77,6 @@ export async function issueTicket(actor: Actor, input: Record<string, unknown>) 
   return adminDb().runTransaction(async (tx) => {
     const account = await requireCurrent(tx, actor);
     const [officeSnap, receiptSnap] = await tx.getAll(office, receipt);
-    const allCountersSnap = await tx.get(office.collection("counters"));
     if (receiptSnap.exists) {
       const previous = receiptSnap.data()!;
       if (previous.officeId !== id || (serviceId ? previous.serviceId !== serviceId : previous.service !== service) || previous.notes !== notes) {
@@ -100,15 +99,24 @@ export async function issueTicket(actor: Actor, input: Record<string, unknown>) 
     const issuedAt = now();
 
     // Auto-promote into SERVING immediately when no one is waiting and an online counter is idle
-    const freeCounters = allCountersSnap.docs.filter((doc) => {
-      const c = doc.data();
-      return !c.archivedAt && c.status === "online" && !c.ticketId;
-    });
-    const preferredFreeCounter =
-      freeCounters.find((doc) => doc.id === config.windowLabel) ?? freeCounters[0];
-    const autoPromote = Boolean(preferredFreeCounter) && (config.waitingCount ?? 0) === 0;
-
-    if (autoPromote && preferredFreeCounter) {
+    const counterCollection = office.collection("counters");
+    const eligible = (data: FirebaseFirestore.DocumentData | undefined) =>
+      data && !data.archivedAt && data.status === "online" && !data.ticketId;
+    let preferredFreeCounter: FirebaseFirestore.DocumentSnapshot | undefined;
+    if ((config.waitingCount ?? 0) === 0) {
+      const firstWaiting = await tx.get(waiting(id).limit(1));
+      if (firstWaiting.empty) {
+        const defaultCounter = typeof config.windowLabel === "string" && config.windowLabel && !config.windowLabel.includes("/")
+          ? await tx.get(counterCollection.doc(config.windowLabel))
+          : undefined;
+        if (defaultCounter && eligible(defaultCounter.data())) preferredFreeCounter = defaultCounter;
+        else {
+          const candidates = await tx.get(counterCollection.where("status", "==", "online"));
+          preferredFreeCounter = candidates.docs.find((doc) => eligible(doc.data()));
+        }
+      }
+    }
+    if (preferredFreeCounter) {
       const counterName = preferredFreeCounter.id;
       const servingByCounter = {
         ...(config.servingByCounter ?? {}),
