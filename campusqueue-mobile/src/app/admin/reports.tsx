@@ -13,6 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdminRecordDetailModal } from '../../components/admin/AdminRecordDetailModal';
+import { AdminReportsSkeleton } from '../../components/admin/AdminSkeleton';
 import { ExportSystemReportModal } from '../../components/admin/ExportSystemReportModal';
 import { useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
@@ -45,6 +46,9 @@ export default function AdminReportsScreen() {
     offices,
     auditRecords,
     isLoadingLive,
+    isLoadingLogs,
+    hasLoadedLive,
+    logsError,
     fetchLiveAuditLogs,
     downloadAnalyticsReport,
   } = useAdmin();
@@ -307,7 +311,7 @@ export default function AdminReportsScreen() {
           </ScrollView>
         </View>
 
-        {/* Error State */}
+        {/* Error / Loading Skeleton / Empty / Records State */}
         {dateRangeInvalid ? (
           <View style={styles.errorCard}>
             <Feather name="alert-circle" size={18} color={Colors.danger} />
@@ -315,15 +319,34 @@ export default function AdminReportsScreen() {
               Error querying transaction records. Please narrow your date range and retry.
             </Text>
           </View>
-        ) : paginatedRecords.length === 0 ? (
-          <View style={[styles.emptyCard, Shadows.card]}>
-            <Feather name="file-text" size={24} color={Colors.inkMuted} />
-            <Text style={styles.emptyText}>
-              No transaction records found for the selected date range and filters.
-            </Text>
-          </View>
         ) : (
           <>
+            {logsError ? (
+              <Pressable
+                onPress={() => {
+                  triggerHaptic('light');
+                  void fetchLiveAuditLogs(startDate, endDate, officeFilter);
+                }}
+                style={styles.errorCard}
+              >
+                <Feather name="alert-triangle" size={18} color={Colors.danger} />
+                <Text style={styles.errorText}>
+                  Unable to load activity logs ({logsError}). Tap to retry.
+                </Text>
+              </Pressable>
+            ) : null}
+
+            {isLoadingLogs || ((isLoadingLive || !hasLoadedLive) && auditRecords.length === 0) ? (
+              <AdminReportsSkeleton />
+            ) : paginatedRecords.length === 0 ? (
+              <View style={[styles.emptyCard, Shadows.card]}>
+                <Feather name="file-text" size={24} color={Colors.inkMuted} />
+                <Text style={styles.emptyText}>
+                  No transaction records found for the selected date range and filters.
+                </Text>
+              </View>
+            ) : (
+              <>
             {paginatedRecords.map((rec) => {
               const badge = getTicketStatusBadgeStyle(rec.outcome);
               return (
@@ -392,6 +415,8 @@ export default function AdminReportsScreen() {
                 </Pressable>
               </View>
             ) : null}
+              </>
+            )}
           </>
         )}
       </ScrollView>

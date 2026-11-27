@@ -13,6 +13,7 @@ import { useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AdminUsersSkeleton } from '../../components/admin/AdminSkeleton';
 import { EditUserRoleAndOfficeModal } from '../../components/admin/EditUserRoleAndOfficeModal';
 import { ProvisionStaffOrAdminModal } from '../../components/admin/ProvisionStaffOrAdminModal';
 import { ResetUserPasswordModal } from '../../components/admin/ResetUserPasswordModal';
@@ -30,6 +31,8 @@ export default function AdminUsersScreen() {
     users,
     offices,
     isLoadingLive,
+    hasLoadedLive,
+    liveError,
     refreshAdminData,
     directoryTotalBadges,
     provisionUser,
@@ -192,8 +195,27 @@ export default function AdminUsersScreen() {
           </ScrollView>
         ) : null}
 
+        {/* Sync Error Banner */}
+        {liveError ? (
+          <Pressable
+            onPress={() => {
+              triggerHaptic('light');
+              void refreshAdminData();
+            }}
+            style={[styles.errorCard, Shadows.card]}
+          >
+            <Feather name="alert-triangle" size={16} color={Colors.danger} />
+            <View style={styles.flex}>
+              <Text style={styles.errorCardTitle}>Unable to sync user directory.</Text>
+              <Text style={styles.errorCardSub}>Tap to retry.</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         {/* Directory List */}
-        {filteredUsers.length === 0 ? (
+        {(isLoadingLive || !hasLoadedLive) && users.length === 0 ? (
+          <AdminUsersSkeleton />
+        ) : filteredUsers.length === 0 ? (
           <View style={[styles.emptyCard, Shadows.card]}>
             <Feather name="users" size={24} color={Colors.inkMuted} />
             <Text style={styles.emptyTitle}>No user accounts match your search criteria.</Text>
@@ -593,5 +615,26 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodySemiBold,
     fontSize: 11.5,
     color: Colors.ink,
+  },
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: Radii.card,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+  },
+  errorCardTitle: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+    color: Colors.danger,
+  },
+  errorCardSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 11.5,
+    color: Colors.inkSoft,
+    marginTop: 1,
   },
 });

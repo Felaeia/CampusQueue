@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AddOrEditOfficeModal } from '../../components/admin/AddOrEditOfficeModal';
 import { AddOrEditServiceModal } from '../../components/admin/AddOrEditServiceModal';
+import { AdminOfficesSkeleton } from '../../components/admin/AdminSkeleton';
 import { ResetOfficeQueueSequenceModal } from '../../components/admin/ResetOfficeQueueSequenceModal';
 import { useAdmin } from '../../context/AdminContext';
 import { useQueue } from '../../context/QueueContext';
@@ -29,6 +30,8 @@ export default function AdminOfficesScreen() {
   const {
     offices,
     isLoadingLive,
+    hasLoadedLive,
+    liveError,
     refreshAdminData,
     toggleOfficeStatus,
     toggleServiceStatus,
@@ -105,7 +108,25 @@ export default function AdminOfficesScreen() {
           />
         }
       >
-        {offices.length === 0 ? (
+        {liveError ? (
+          <Pressable
+            onPress={() => {
+              triggerHaptic('light');
+              void refreshAdminData();
+            }}
+            style={[styles.errorCard, Shadows.card]}
+          >
+            <Feather name="alert-triangle" size={16} color={Colors.danger} />
+            <View style={styles.flex}>
+              <Text style={styles.errorCardTitle}>Unable to sync campus offices.</Text>
+              <Text style={styles.errorCardSub}>Tap to retry.</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {(isLoadingLive || !hasLoadedLive) && offices.length === 0 ? (
+          <AdminOfficesSkeleton />
+        ) : offices.length === 0 ? (
           <View style={[styles.emptyCard, Shadows.card]}>
             <Feather name="layers" size={26} color={Colors.inkMuted} />
             <Text style={styles.emptyTitle}>No campus offices configured.</Text>
@@ -509,5 +530,26 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: Colors.inkSoft,
     marginTop: 2,
+  },
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: Radii.card,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+  },
+  errorCardTitle: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+    color: Colors.danger,
+  },
+  errorCardSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 11.5,
+    color: Colors.inkSoft,
+    marginTop: 1,
   },
 });

@@ -12,6 +12,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AdminDashboardSkeleton } from '../../components/admin/AdminSkeleton';
 import { CampusQueueBroadcastModal } from '../../components/admin/CampusQueueBroadcastModal';
 import { OfficeCongestionDrilldownModal } from '../../components/admin/OfficeCongestionDrilldownModal';
 import { RadarPulseDot } from '../../components/RadarPulseDot';
@@ -40,6 +41,7 @@ export default function AdminOverviewScreen() {
     broadcasts,
     logoutAdmin,
     isLoadingLive,
+    hasLoadedLive,
     liveError,
     refreshAdminData,
   } = useAdmin();
@@ -56,7 +58,7 @@ export default function AdminOverviewScreen() {
     }, [refreshAdminData, selectedRange])
   );
 
-  const isLoading = isLoadingLive;
+  const isLoading = isLoadingLive || (!hasLoadedLive && offices.length === 0 && !liveError);
   const hasError = Boolean(liveError);
 
   const kpi = useMemo(() => getKpiSnapshot(selectedRange), [getKpiSnapshot, selectedRange]);
@@ -204,14 +206,7 @@ export default function AdminOverviewScreen() {
 
         {/* Loading Skeleton State */}
         {isLoading ? (
-          <View style={styles.skeletonWrap}>
-            <View style={styles.bentoGrid}>
-              {[0, 1, 2, 3].map((idx) => (
-                <View key={idx} style={styles.skeletonKpi} />
-              ))}
-            </View>
-            <View style={styles.skeletonChart} />
-          </View>
+          <AdminDashboardSkeleton />
         ) : (
           <>
             {/* Empty Day Notice Banner (keeps KPIs & Live Office Monitor visible) */}
