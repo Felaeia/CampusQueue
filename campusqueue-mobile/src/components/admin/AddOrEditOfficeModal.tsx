@@ -105,18 +105,25 @@ export function AddOrEditOfficeModal({
               </View>
 
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Ticket Prefix (1–2 Uppercase Letters) *</Text>
+                <Text style={styles.label}>
+                  Ticket Prefix (1–4 Uppercase Letters){editingOffice ? ' (Fixed)' : ' *'}
+                </Text>
                 <TextInput
                   value={ticketPrefix}
+                  editable={!editingOffice}
                   onChangeText={(t) => {
-                    setTicketPrefix(t.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2));
+                    setTicketPrefix(t.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4));
                     if (errorMsg) setErrorMsg('');
                   }}
                   placeholder="e.g., A"
                   placeholderTextColor={Colors.inkMuted}
                   autoCapitalize="characters"
-                  maxLength={2}
-                  style={[styles.input, styles.monoInput]}
+                  maxLength={4}
+                  style={[
+                    styles.input,
+                    styles.monoInput,
+                    editingOffice && { opacity: 0.65 },
+                  ]}
                 />
               </View>
 

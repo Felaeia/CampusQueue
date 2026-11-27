@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -8,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -27,6 +28,8 @@ export default function AdminOfficesScreen() {
   const { focusOfficeId } = useLocalSearchParams<{ focusOfficeId?: string }>();
   const {
     offices,
+    isLoadingLive,
+    refreshAdminData,
     toggleOfficeStatus,
     toggleServiceStatus,
     saveOffice,
@@ -34,6 +37,12 @@ export default function AdminOfficesScreen() {
     resetOfficeSequence,
   } = useAdmin();
   const { triggerHaptic } = useQueue();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshAdminData(undefined, true);
+    }, [refreshAdminData])
+  );
 
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(() => ({
     registrar: true,
@@ -86,6 +95,15 @@ export default function AdminOfficesScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoadingLive}
+            onRefresh={() => {
+              void refreshAdminData();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {offices.length === 0 ? (
           <View style={[styles.emptyCard, Shadows.card]}>
@@ -131,7 +149,7 @@ export default function AdminOfficesScreen() {
                       </View>
                     </View>
                     <Text style={styles.officeMeta}>
-                      {office.operatingHours} • Last Issued:{' '}
+                      {office.operatingHours ? `${office.operatingHours} • ` : ''}Last Issued:{' '}
                       <Text style={styles.monoStrong}>{lastIssuedLabel}</Text>
                     </Text>
                   </View>

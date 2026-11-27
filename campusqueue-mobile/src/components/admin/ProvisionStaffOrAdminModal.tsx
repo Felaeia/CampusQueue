@@ -20,25 +20,14 @@ interface ProvisionStaffOrAdminModalProps {
   offices: AdminOfficeRecord[];
   existingUsers: AdminUserRecord[];
   onClose: () => void;
-  onProvision: (input: ProvisionUserInput) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
-}
-
-function suggestNextId(role: 'staff' | 'admin', existingUsers: AdminUserRecord[]): string {
-  const prefix = role === 'staff' ? 'EMP-' : 'ADM-';
-  const digits = role === 'staff' ? 4 : 3;
-  const base = role === 'staff' ? 1043 : 4;
-  let candidate = base;
-  const used = new Set(existingUsers.map((u) => u.identifier.toUpperCase()));
-  while (used.has(`${prefix}${String(candidate).padStart(digits, '0')}`)) {
-    candidate += 1;
-  }
-  return `${prefix}${String(candidate).padStart(digits, '0')}`;
+  onProvision: (
+    input: ProvisionUserInput & { password?: string }
+  ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
 export function ProvisionStaffOrAdminModal({
   visible,
   offices,
-  existingUsers,
   onClose,
   onProvision,
 }: ProvisionStaffOrAdminModalProps) {
@@ -46,23 +35,24 @@ export function ProvisionStaffOrAdminModal({
   const [identifier, setIdentifier] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [assignedOfficeId, setAssignedOfficeId] = useState(offices[0]?.id ?? '');
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     if (visible) {
       setRole('staff');
-      setIdentifier(suggestNextId('staff', existingUsers));
+      setIdentifier('');
       setFullName('');
       setEmail('');
+      setPassword('');
       setAssignedOfficeId(offices[0]?.id ?? '');
       setErrorMsg('');
     }
-  }, [existingUsers, offices, visible]);
+  }, [offices, visible]);
 
   const handleRoleChange = (nextRole: 'staff' | 'admin') => {
     setRole(nextRole);
-    setIdentifier(suggestNextId(nextRole, existingUsers));
     setErrorMsg('');
   };
 
@@ -72,6 +62,7 @@ export function ProvisionStaffOrAdminModal({
       identifier,
       fullName,
       email,
+      password,
       assignedOfficeId: role === 'staff' ? assignedOfficeId : undefined,
     });
     if (!res.ok) {
@@ -137,7 +128,7 @@ export function ProvisionStaffOrAdminModal({
                     setIdentifier(t.toUpperCase());
                     if (errorMsg) setErrorMsg('');
                   }}
-                  placeholder={role === 'staff' ? 'EMP-1043' : 'ADM-004'}
+                  placeholder={role === 'staff' ? 'Enter employee ID' : 'Enter admin ID'}
                   placeholderTextColor={Colors.inkMuted}
                   autoCapitalize="characters"
                   style={[styles.input, styles.monoInput]}
@@ -204,16 +195,21 @@ export function ProvisionStaffOrAdminModal({
                 </View>
               ) : null}
 
-              {/* Initial Password Notice */}
-              <View style={styles.noticeBox}>
-                <Feather name="info" size={14} color={Colors.registrar} />
-                <Text style={styles.noticeText}>
-                  Default password will be set to{' '}
-                  <Text style={styles.monoInline}>
-                    {role === 'staff' ? 'staff123' : 'admin123'}
-                  </Text>{' '}
-                  with mandatory change on first login.
-                </Text>
+              {/* Initial Password */}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Initial Password (min 8 characters) *</Text>
+                <TextInput
+                  value={password}
+                  onChangeText={(t) => {
+                    setPassword(t);
+                    if (errorMsg) setErrorMsg('');
+                  }}
+                  placeholder="Enter initial password"
+                  placeholderTextColor={Colors.inkMuted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  style={styles.input}
+                />
               </View>
 
               {errorMsg ? (
