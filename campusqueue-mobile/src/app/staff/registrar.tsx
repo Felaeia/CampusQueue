@@ -1,7 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,22 +20,29 @@ import { useQueue } from '../../context/QueueContext';
 import { useStaffQueue } from '../../context/StaffQueueContext';
 import { Colors, Fonts, Radii } from '../../theme/tokens';
 import { DeskStatus, StaffQueueTicket } from '../../types/staff';
+import { formatDisplayTimestamp } from '../../utils/waitTime';
 
 export default function StaffQueueDesk() {
   const router = useRouter();
   const { showToast, triggerHaptic, bumpLoginReset } = useQueue();
   const {
     activeStaff,
-    deskConfig,
+    counters,
+    officeServices,
     counterWindow,
     deskStatus,
     servingTicket,
     waitingQueue,
     elapsedSeconds,
     recallCount,
+    isSyncing,
+    isMutating,
+    syncError,
+    refreshDesk,
     setCounterWindow,
     setDeskStatus,
     callNext,
+    startService,
     completeCurrent,
     sendRecall,
     skipCurrent,
@@ -48,6 +57,12 @@ export default function StaffQueueDesk() {
   const [inspectedTicket, setInspectedTicket] = useState<StaffQueueTicket | null>(null);
   const [staffRemarks, setStaffRemarks] = useState('');
   const [skipReason, setSkipReason] = useState('Student did not appear after recall');
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshDesk(false, true);
+    }, [refreshDesk])
+  );
 
   const formatTimer = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
@@ -70,13 +85,28 @@ export default function StaffQueueDesk() {
   }, [waitingQueue, selectedService, searchQuery]);
 
   const handleCallNext = async () => {
+    if (isMutating) return;
     const nextTicket = await callNext();
-    if (!nextTicket) return;
+    if (!nextTicket) {
+      if (waitingQueue.length === 0) {
+        showToast('No students waiting in the queue.', 'dark');
+      }
+      return;
+    }
     triggerHaptic('success');
     showToast(`Now serving ${nextTicket.ticketNumber}`, 'matcha');
   };
 
+  const handleStartService = async () => {
+    if (isMutating || !servingTicket) return;
+    const ok = await startService();
+    if (!ok) return;
+    triggerHaptic('success');
+    showToast(`Service started for ${servingTicket.ticketNumber}`, 'matcha');
+  };
+
   const handleCompleteCurrent = async (advance: boolean) => {
+    if (isMutating) return;
     const { completedNumber, nextTicket } = await completeCurrent(advance, staffRemarks);
     if (!completedNumber) return;
     setShowCompleteModal(false);
@@ -91,6 +121,7 @@ export default function StaffQueueDesk() {
   };
 
   const handleSendRecall = async () => {
+    if (isMutating) return;
     if (!(await sendRecall())) return;
     setShowRecallModal(false);
     triggerHaptic('light');
@@ -98,6 +129,7 @@ export default function StaffQueueDesk() {
   };
 
   const handleSkipCurrent = async () => {
+    if (isMutating) return;
     const { skippedNumber, nextTicket } = await skipCurrent(skipReason);
     if (!skippedNumber) return;
     setShowSkipModal(false);
@@ -193,7 +225,32 @@ export default function StaffQueueDesk() {
         style={styles.scrollContainer}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncing}
+            onRefresh={() => {
+              void refreshDesk(true);
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
+        {syncError ? (
+          <TouchableOpacity
+            style={styles.syncErrorCard}
+            onPress={() => {
+              void refreshDesk(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="cloud-offline-outline" size={18} color={Colors.danger} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.syncErrorTitle}>{syncError}</Text>
+              <Text style={styles.syncErrorSub}>Tap to reload live desk queue</Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
         <View style={styles.nowServingCard}>
           <View style={[styles.ticketNotch, styles.notchLeft]} />
           <View style={[styles.ticketNotch, styles.notchRight]} />
@@ -235,7 +292,11 @@ export default function StaffQueueDesk() {
                     { color: servingTicket.isQrVerified ? '#166534' : '#92400E' },
                   ]}
                 >
-                  {servingTicket.isQrVerified ? 'QR identity verified' : 'QR not verified'}
+                  {servingTicket.isQrVerified
+                    ? 'QR identity verified'
+                    : servingTicket.acknowledgedAt
+                      ? 'Student is on the way • QR pending'
+                      : 'QR not verified'}
                 </Text>
                 {recallCount > 0 && (
                   <View style={styles.recallBadge}>
@@ -243,6 +304,15 @@ export default function StaffQueueDesk() {
                   </View>
                 )}
               </View>
+
+              {servingTicket.acknowledgedAt && servingTicket.isQrVerified ? (
+                <View style={styles.ackBanner}>
+                  <Ionicons name="walk-outline" size={14} color={Colors.matcha} />
+                  <Text style={styles.ackBannerText}>
+                    Acknowledged at {formatDisplayTimestamp(servingTicket.acknowledgedAt, 'time')}
+                  </Text>
+                </View>
+              ) : null}
 
               <View style={styles.divider} />
 
@@ -259,7 +329,8 @@ export default function StaffQueueDesk() {
                 <View style={styles.studentInfo}>
                   <Text style={styles.studentName}>{servingTicket.studentName}</Text>
                   <Text style={styles.studentMeta}>
-                    {servingTicket.usn} • {servingTicket.program}
+                    {servingTicket.usn}
+                    {servingTicket.program ? ` • ${servingTicket.program}` : ''}
                   </Text>
                   <Text style={styles.serviceName}>{servingTicket.serviceType}</Text>
                 </View>
@@ -272,10 +343,27 @@ export default function StaffQueueDesk() {
                 </View>
               ) : null}
 
+              {servingTicket.status === 'called' ? (
+                <TouchableOpacity
+                  style={styles.startServiceBtn}
+                  onPress={() => {
+                    void handleStartService();
+                  }}
+                  disabled={isMutating}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="play-circle-outline" size={18} color={Colors.matcha} />
+                  <Text style={styles.startServiceBtnText}>
+                    {isMutating ? 'Starting...' : 'Start Service'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+
               <View style={styles.actionRow}>
                 <TouchableOpacity
                   style={styles.recallButton}
                   onPress={() => setShowRecallModal(true)}
+                  disabled={isMutating}
                   activeOpacity={0.85}
                 >
                   <Ionicons name="volume-high-outline" size={18} color={Colors.ink} />
@@ -284,34 +372,55 @@ export default function StaffQueueDesk() {
                 <TouchableOpacity
                   style={styles.completeButton}
                   onPress={() => setShowCompleteModal(true)}
+                  disabled={isMutating}
                   activeOpacity={0.85}
                 >
-                  <Ionicons name="checkmark" size={18} color={Colors.ink} />
-                  <Text style={styles.completeButtonText}>Complete</Text>
+                  {isMutating ? (
+                    <ActivityIndicator size="small" color={Colors.ink} />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark" size={18} color={Colors.ink} />
+                      <Text style={styles.completeButtonText}>Complete</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
 
               <TouchableOpacity
                 style={styles.skipButton}
                 onPress={() => setShowSkipModal(true)}
+                disabled={isMutating}
                 activeOpacity={0.85}
               >
                 <Ionicons name="close-circle-outline" size={17} color="#FCA5A5" />
-                <Text style={styles.skipButtonText}>Skip ticket</Text>
+                <Text style={styles.skipButtonText}>Skip / No-Show</Text>
               </TouchableOpacity>
             </>
           ) : (
             <View style={styles.emptyServing}>
               <Ionicons name="checkmark-done-circle-outline" size={42} color={Colors.matcha} />
               <Text style={styles.emptyServingTitle}>Queue is clear</Text>
-              <Text style={styles.emptyServingText}>Call the next waiting student.</Text>
+              <Text style={styles.emptyServingText}>
+                {waitingQueue.length > 0
+                  ? `${waitingQueue.length} waiting — call the next student.`
+                  : 'Waiting for students to join the queue.'}
+              </Text>
               <TouchableOpacity
                 style={styles.callNextButton}
-                onPress={handleCallNext}
+                onPress={() => {
+                  void handleCallNext();
+                }}
+                disabled={isMutating}
                 activeOpacity={0.85}
               >
-                <Text style={styles.callNextText}>Call next</Text>
-                <Ionicons name="arrow-forward" size={18} color={Colors.ink} />
+                {isMutating ? (
+                  <ActivityIndicator size="small" color={Colors.ink} />
+                ) : (
+                  <>
+                    <Text style={styles.callNextText}>Call next</Text>
+                    <Ionicons name="arrow-forward" size={18} color={Colors.ink} />
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           )}
@@ -326,11 +435,11 @@ export default function StaffQueueDesk() {
             {servingTicket && waitingQueue.length > 0 ? (
               <TouchableOpacity
                 style={styles.nextButton}
-                onPress={handleCallNext}
+                onPress={() => setShowCompleteModal(true)}
                 activeOpacity={0.85}
               >
                 <Ionicons name="arrow-forward" size={16} color={Colors.ink} />
-                <Text style={styles.nextButtonText}>Next</Text>
+                <Text style={styles.nextButtonText}>Complete &amp; Next</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -351,7 +460,7 @@ export default function StaffQueueDesk() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.serviceFilterRow}
           >
-            {deskConfig.services.map((service) => {
+            {officeServices.map((service) => {
               const active = selectedService === service;
               return (
                 <TouchableOpacity
@@ -381,7 +490,9 @@ export default function StaffQueueDesk() {
               <View style={styles.queueCardInfo}>
                 <View style={styles.queueCardTop}>
                   <Text style={styles.queueTicketNumber}>{ticket.ticketNumber}</Text>
-                  <Text style={styles.waitTime}>{ticket.waitMinutes} mins</Text>
+                  <Text style={styles.waitTime}>
+                    ~{Math.max(0, ticket.estWaitMins ?? ticket.waitMinutes)} mins
+                  </Text>
                 </View>
                 <Text style={styles.queueStudentName}>{ticket.studentName}</Text>
                 <View style={styles.serviceChip}>
@@ -395,7 +506,11 @@ export default function StaffQueueDesk() {
           {filteredQueue.length === 0 && (
             <View style={styles.emptyQueue}>
               <Ionicons name="file-tray-outline" size={30} color="#A3A3A3" />
-              <Text style={styles.emptyQueueText}>No tickets match this filter</Text>
+              <Text style={styles.emptyQueueText}>
+                {waitingQueue.length === 0
+                  ? 'No students currently waiting in queue'
+                  : 'No tickets match this filter'}
+              </Text>
             </View>
           )}
         </View>
@@ -411,15 +526,21 @@ export default function StaffQueueDesk() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Counter settings</Text>
-            <Text style={styles.modalLabel}>Window</Text>
-            {['Window 1', 'Window 2', 'Window 3'].map((window) => (
+            <Text style={styles.modalLabel}>Assigned Counter</Text>
+            {(counters.length > 0
+              ? counters
+              : [{ id: counterWindow || 'Window 1', name: counterWindow || 'Window 1', status: deskStatus }]
+            ).map((windowOption) => (
               <TouchableOpacity
-                key={window}
-                style={[styles.optionRow, counterWindow === window && styles.optionRowActive]}
-                onPress={() => setCounterWindow(window)}
+                key={windowOption.id}
+                style={[
+                  styles.optionRow,
+                  counterWindow === windowOption.id && styles.optionRowActive,
+                ]}
+                onPress={() => setCounterWindow(windowOption.id)}
               >
-                <Text style={styles.optionText}>{window}</Text>
-                {counterWindow === window && (
+                <Text style={styles.optionText}>{windowOption.name}</Text>
+                {counterWindow === windowOption.id && (
                   <Ionicons name="checkmark-circle" size={20} color={Colors.successText} />
                 )}
               </TouchableOpacity>
@@ -563,9 +684,17 @@ export default function StaffQueueDesk() {
               <Text style={styles.modalTitle}>{inspectedTicket.ticketNumber}</Text>
               <Text style={styles.modalBody}>{inspectedTicket.studentName}</Text>
               <Text style={styles.detailText}>USN: {inspectedTicket.usn}</Text>
-              <Text style={styles.detailText}>Program: {inspectedTicket.program}</Text>
+              <Text style={styles.detailText}>
+                Program: {inspectedTicket.program || '—'}
+              </Text>
               <Text style={styles.detailText}>Service: {inspectedTicket.serviceType}</Text>
-              <Text style={styles.detailText}>Wait time: {inspectedTicket.waitMinutes} minutes</Text>
+              <Text style={styles.detailText}>
+                Est. wait: ~{Math.max(0, inspectedTicket.estWaitMins ?? inspectedTicket.waitMinutes)}{' '}
+                minutes (waiting {inspectedTicket.waitMinutes}m)
+              </Text>
+              <Text style={styles.detailText}>
+                Issued: {formatDisplayTimestamp(inspectedTicket.issuedAt, 'short')}
+              </Text>
               {inspectedTicket.notes ? (
                 <Text style={styles.detailText}>Notes: {inspectedTicket.notes}</Text>
               ) : null}
@@ -1201,5 +1330,56 @@ const styles = StyleSheet.create({
     color: Colors.ink,
     fontFamily: Fonts.bodyMedium,
     marginTop: 6,
+  },
+  syncErrorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.dangerSoftBg,
+    borderWidth: 1,
+    borderColor: Colors.dangerBorder,
+    borderRadius: Radii.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  syncErrorTitle: {
+    color: Colors.danger,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12,
+  },
+  syncErrorSub: {
+    color: Colors.inkSoft,
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  ackBanner: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  ackBannerText: {
+    color: Colors.matcha,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 11,
+  },
+  startServiceBtn: {
+    marginTop: 14,
+    height: 44,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: Colors.matcha,
+    backgroundColor: 'rgba(184, 242, 58, 0.12)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  startServiceBtnText: {
+    color: Colors.matcha,
+    fontFamily: Fonts.displayExtraBold,
+    fontSize: 13.5,
   },
 });
