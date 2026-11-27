@@ -5,7 +5,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { Colors, Fonts } from '../theme/tokens';
 
 interface TactileQRCodeProps {
-  value?: string;
+  value: string;
   size?: number;
 }
 
@@ -14,7 +14,7 @@ interface TactileQRCodeProps {
  * with a centered Acid Matcha "CQ" emblem overlay.
  */
 export function TactileQRCode({
-  value = 'cq:v1:R-042:23000440130',
+  value,
   size = 114,
 }: TactileQRCodeProps) {
   const innerSize = Math.max(56, size - 16);

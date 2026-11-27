@@ -12,6 +12,7 @@ import {
   Shadows,
 } from '../../theme/tokens';
 import { DieCutNotch } from '../DieCutNotch';
+import { formatDisplayTimestamp } from '../../utils/waitTime';
 
 interface HistoryReceiptCardProps {
   item: HistoryTicket;
@@ -66,8 +67,8 @@ export function HistoryReceiptCard({ item, onPress }: HistoryReceiptCardProps) {
 
       {/* Bottom Metadata Strip */}
       <View style={styles.bottom}>
-        <Text style={styles.metaText}>{item.timestamp}</Text>
-        <Text style={styles.metaText}>{item.counter}</Text>
+        <Text style={styles.metaText}>{formatDisplayTimestamp(item.timestamp, 'datetime')}</Text>
+        <Text style={styles.metaText}>{item.counter || '—'}</Text>
       </View>
     </Pressable>
   );

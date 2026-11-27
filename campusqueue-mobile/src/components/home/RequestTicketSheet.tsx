@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -18,21 +19,59 @@ import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 interface RequestTicketSheetProps {
   office: Office | null;
   onClose: () => void;
-  onConfirm: (serviceName: string, notes: string) => void;
+  onConfirm: (selection: {
+    serviceId?: string;
+    serviceName: string;
+    notes: string;
+    requestId: string;
+  }) => void | Promise<void>;
+}
+
+function makeRequestId(): string {
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicketSheetProps) {
-  const [selectedService, setSelectedService] = useState('');
+  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [selectedServiceName, setSelectedServiceName] = useState('');
   const [ticketNotes, setTicketNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const requestIdRef = useRef(makeRequestId());
 
   useEffect(() => {
     if (office) {
-      setSelectedService(office.services[0]?.name ?? '');
+      setSelectedServiceId(office.services[0]?.id ?? '');
+      setSelectedServiceName(office.services[0]?.name ?? '');
       setTicketNotes('');
+      setIsSubmitting(false);
+      requestIdRef.current = makeRequestId();
     }
   }, [office]);
 
   if (!office) return null;
+
+  const handleSelectService = (id: string, name: string) => {
+    if (id !== selectedServiceId) {
+      requestIdRef.current = makeRequestId();
+    }
+    setSelectedServiceId(id);
+    setSelectedServiceName(name);
+  };
+
+  const handleSubmit = async () => {
+    if (isSubmitting || !selectedServiceName) return;
+    setIsSubmitting(true);
+    try {
+      await onConfirm({
+        serviceId: selectedServiceId || undefined,
+        serviceName: selectedServiceName,
+        notes: ticketNotes,
+        requestId: requestIdRef.current,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <Modal
@@ -54,7 +93,7 @@ export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicket
             <View style={styles.headerCopy}>
               <Text style={styles.title}>{office.name}</Text>
               <Text style={styles.subtitle}>
-                {office.waitingCount} waiting • Now Serving {office.nowServing}
+                {office.waitingCount} waiting • Now Serving {office.nowServing || '—'}
               </Text>
             </View>
             <Pressable
@@ -72,52 +111,65 @@ export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicket
             contentContainerStyle={styles.servicesList}
             showsVerticalScrollIndicator={false}
           >
-            {office.services.map((srv) => {
-              const isSelected = selectedService === srv.name;
-              return (
-                <Pressable
-                  key={srv.id}
-                  onPress={() => setSelectedService(srv.name)}
-                  style={[
-                    styles.serviceItem,
-                    isSelected ? styles.serviceItemSelected : styles.serviceItemDefault,
-                  ]}
-                >
-                  <View style={styles.serviceCopy}>
-                    <Text
-                      style={[
-                        styles.serviceName,
-                        isSelected && styles.serviceNameSelected,
-                      ]}
-                    >
-                      {srv.name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.serviceMeta,
-                        isSelected && styles.serviceMetaSelected,
-                      ]}
-                    >
-                      Est. {srv.duration}m • Bring: {srv.docs}
-                    </Text>
-                  </View>
-
-                  <View
+            {office.services.length === 0 ? (
+              <View style={styles.serviceItemDefault}>
+                <Text style={styles.serviceMeta}>
+                  No active services are configured for this office right now.
+                </Text>
+              </View>
+            ) : (
+              office.services.map((srv) => {
+                const isSelected = selectedServiceId
+                  ? selectedServiceId === srv.id
+                  : selectedServiceName === srv.name;
+                return (
+                  <Pressable
+                    key={srv.id}
+                    onPress={() => handleSelectService(srv.id, srv.name)}
                     style={[
-                      styles.checkCircle,
-                      isSelected ? styles.checkCircleSelected : styles.checkCircleDefault,
+                      styles.serviceItem,
+                      isSelected ? styles.serviceItemSelected : styles.serviceItemDefault,
                     ]}
                   >
-                    {isSelected ? <Feather name="check" size={12} color={Colors.ink} /> : null}
-                  </View>
-                </Pressable>
-              );
-            })}
+                    <View style={styles.serviceCopy}>
+                      <Text
+                        style={[
+                          styles.serviceName,
+                          isSelected && styles.serviceNameSelected,
+                        ]}
+                      >
+                        {srv.name}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.serviceMeta,
+                          isSelected && styles.serviceMetaSelected,
+                        ]}
+                      >
+                        Est. {srv.duration}m{srv.docs ? ` • Bring: ${srv.docs}` : ''}
+                      </Text>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.checkCircle,
+                        isSelected ? styles.checkCircleSelected : styles.checkCircleDefault,
+                      ]}
+                    >
+                      {isSelected ? <Feather name="check" size={12} color={Colors.ink} /> : null}
+                    </View>
+                  </Pressable>
+                );
+              })
+            )}
           </ScrollView>
 
           <TextInput
             value={ticketNotes}
-            onChangeText={setTicketNotes}
+            onChangeText={(text) => {
+              setTicketNotes(text);
+              requestIdRef.current = makeRequestId();
+            }}
             maxLength={120}
             placeholder="Optional notes (e.g., document or purpose)"
             placeholderTextColor="rgba(18, 20, 23, 0.42)"
@@ -127,19 +179,27 @@ export function RequestTicketSheet({ office, onClose, onConfirm }: RequestTicket
           <View style={styles.actions}>
             <Pressable
               onPress={onClose}
+              disabled={isSubmitting}
               style={({ pressed }) => [styles.cancelBtn, pressed && styles.pressed]}
             >
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </Pressable>
             <Pressable
-              onPress={() => onConfirm(selectedService, ticketNotes)}
+              onPress={() => {
+                void handleSubmit();
+              }}
+              disabled={isSubmitting || !selectedServiceName}
               style={({ pressed }) => [
                 styles.confirmBtn,
                 { backgroundColor: office.themeColor },
-                pressed && styles.pressed,
+                (pressed || isSubmitting || !selectedServiceName) && styles.pressed,
               ]}
             >
-              <Text style={styles.confirmBtnText}>Confirm &amp; Issue Ticket</Text>
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color={Colors.surface} />
+              ) : (
+                <Text style={styles.confirmBtnText}>Confirm &amp; Issue Ticket</Text>
+              )}
             </Pressable>
           </View>
         </View>
