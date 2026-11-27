@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -20,13 +22,6 @@ import { useQueue } from '../../context/QueueContext';
 import { Colors, Fonts, Radii, Shadows } from '../../theme/tokens';
 import { AdminUserRecord, AdminUserRole } from '../../types/admin';
 
-const OFFICE_FILTER_OPTIONS = [
-  { id: 'all', label: 'All Offices' },
-  { id: 'registrar', label: 'Registrar' },
-  { id: 'accounting', label: 'Accounting' },
-  { id: 'sao', label: 'SAO' },
-];
-
 /**
  * Screen 4.3: User & Role Access Management (/admin/users)
  */
@@ -34,6 +29,8 @@ export default function AdminUsersScreen() {
   const {
     users,
     offices,
+    isLoadingLive,
+    refreshAdminData,
     directoryTotalBadges,
     provisionUser,
     updateStaffAssignment,
@@ -41,6 +38,20 @@ export default function AdminUsersScreen() {
     toggleAccountStatus,
   } = useAdmin();
   const { triggerHaptic } = useQueue();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshAdminData(undefined, true);
+    }, [refreshAdminData])
+  );
+
+  const officeFilterOptions = useMemo(
+    () => [
+      { id: 'all', label: 'All Offices' },
+      ...offices.map((o) => ({ id: o.id, label: o.shortLabel || o.name })),
+    ],
+    [offices]
+  );
 
   const [activeTab, setActiveTab] = useState<AdminUserRole>('staff');
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,6 +105,15 @@ export default function AdminUsersScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoadingLive}
+            onRefresh={() => {
+              void refreshAdminData();
+            }}
+            tintColor={Colors.ink}
+          />
+        }
       >
         {/* Role Directory Tabs */}
         <View style={styles.tabBar}>
@@ -155,7 +175,7 @@ export default function AdminUsersScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.filterRow}
           >
-            {OFFICE_FILTER_OPTIONS.map((opt) => {
+            {officeFilterOptions.map((opt) => {
               const active = officeFilter === opt.id;
               return (
                 <Pressable
