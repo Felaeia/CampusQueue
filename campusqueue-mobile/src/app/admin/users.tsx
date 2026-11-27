@@ -32,7 +32,7 @@ export default function AdminUsersScreen() {
     offices,
     isLoadingLive,
     hasLoadedLive,
-    liveError,
+    usersError,
     refreshAdminData,
     directoryTotalBadges,
     provisionUser,
@@ -196,7 +196,7 @@ export default function AdminUsersScreen() {
         ) : null}
 
         {/* Sync Error Banner */}
-        {liveError ? (
+        {usersError ? (
           <Pressable
             onPress={() => {
               triggerHaptic('light');
@@ -207,7 +207,7 @@ export default function AdminUsersScreen() {
             <Feather name="alert-triangle" size={16} color={Colors.danger} />
             <View style={styles.flex}>
               <Text style={styles.errorCardTitle}>Unable to sync user directory.</Text>
-              <Text style={styles.errorCardSub}>Tap to retry.</Text>
+              <Text style={styles.errorCardSub}>{usersError} Tap to retry.</Text>
             </View>
           </Pressable>
         ) : null}
